@@ -1,0 +1,40 @@
+[project]
+name = "reactory-speech-service"
+version = "1.0.0"
+description = "Reactory Speech Service - Local TTS (Kokoro) and STT (faster-whisper) microservice"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "kokoro-onnx>=0.4.0",
+    "faster-whisper>=1.1.0",
+    "soundfile>=0.12.0",
+    "numpy>=1.26.0",
+    "pydantic-settings>=2.6.0",
+    "python-multipart>=0.0.12",
+    "websockets>=13.0",
+    "pydub>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests requiring real model inference (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
