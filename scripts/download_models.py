@@ -2,42 +2,40 @@
 """Download required models for the Reactory Speech Service."""
 
 import os
-import sys
 from pathlib import Path
+
+
+KOKORO_BASE_URL = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+)
+
+
+def _download_file(url: str, dest: Path) -> None:
+    """Download a file from *url* to *dest* with a progress indicator."""
+    import urllib.request
+    import shutil
+
+    with urllib.request.urlopen(url) as resp, open(dest, "wb") as out:  # noqa: S310
+        shutil.copyfileobj(resp, out)
 
 
 def download_kokoro_models(models_dir: Path) -> None:
     """Download Kokoro TTS ONNX model and voice pack."""
-    onnx_path = models_dir / "kokoro-v1_9.onnx"
-    voices_path = models_dir / "voices-v1_0.bin"
+    onnx_path = models_dir / "kokoro-v1.0.onnx"
+    voices_path = models_dir / "voices-v1.0.bin"
 
     if onnx_path.exists() and voices_path.exists():
         print("✅ Kokoro models already present.")
         return
 
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError:
-        print("Installing huggingface_hub for model download...")
-        os.system(f"{sys.executable} -m pip install huggingface_hub")
-        from huggingface_hub import hf_hub_download
-
     if not onnx_path.exists():
-        print("⬇️  Downloading Kokoro ONNX model (~330MB)...")
-        hf_hub_download(
-            repo_id="hexgrad/Kokoro-82M",
-            filename="kokoro-v1_9.onnx",
-            local_dir=str(models_dir),
-        )
+        print("⬇️  Downloading Kokoro ONNX model (~310MB)...")
+        _download_file(f"{KOKORO_BASE_URL}/kokoro-v1.0.onnx", onnx_path)
         print("✅ Kokoro ONNX model downloaded.")
 
     if not voices_path.exists():
         print("⬇️  Downloading Kokoro voice pack (~4MB)...")
-        hf_hub_download(
-            repo_id="hexgrad/Kokoro-82M",
-            filename="voices-v1_0.bin",
-            local_dir=str(models_dir),
-        )
+        _download_file(f"{KOKORO_BASE_URL}/voices-v1.0.bin", voices_path)
         print("✅ Kokoro voice pack downloaded.")
 
 

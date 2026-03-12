@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     speech_service_port: int = 8765
 
     # TTS (Kokoro)
-    kokoro_model_path: str = "models/kokoro-v1_9.onnx"
-    kokoro_voices_path: str = "models/voices-v1_0.bin"
+    kokoro_model_path: str = "models/kokoro-v1.0.onnx"
+    kokoro_voices_path: str = "models/voices-v1.0.bin"
     kokoro_default_voice: str = "af_heart"
     kokoro_default_speed: float = 1.0
 
