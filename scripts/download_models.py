@@ -40,9 +40,14 @@ def download_kokoro_models(models_dir: Path) -> None:
 
 
 def download_whisper_model(model_size: str) -> None:
-    """Ensure faster-whisper model is available (auto-downloads on first use)."""
-    print(f"ℹ️  faster-whisper '{model_size}' model will auto-download on first use.")
-    print("   To pre-download, run: python -c \"from faster_whisper import WhisperModel; WhisperModel('{model_size}')\"")
+    """Ensure faster-whisper model is downloaded and cached."""
+    print(f"⬇️  Downloading faster-whisper '{model_size}' model...")
+    try:
+        from faster_whisper import WhisperModel
+        WhisperModel(model_size, device="cpu", compute_type="int8")
+        print(f"✅ faster-whisper '{model_size}' model downloaded.")
+    except Exception as e:
+        print(f"⚠️ Could not pre-download whisper model: {e}")
 
 
 def main() -> None:

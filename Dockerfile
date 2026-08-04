@@ -15,12 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ app/
 COPY scripts/ scripts/
+COPY models/ models/
 
-# Create models directory
-RUN mkdir -p models
-
-# Download models at build time (cached in layer)
-COPY scripts/download_models.py scripts/
+# Download models at build time if not present
 RUN python scripts/download_models.py
 
 EXPOSE 8765
