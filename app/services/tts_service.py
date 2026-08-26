@@ -2,6 +2,7 @@
 
 import io
 import logging
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
@@ -40,9 +41,43 @@ class TTSService:
         try:
             from kokoro_onnx import Kokoro
 
-            model_path = str(settings.kokoro_model_resolved)
-            voices_path = str(settings.kokoro_voices_resolved)
-            logger.info("Loading Kokoro TTS model from %s", model_path)
+            model_path = None
+            if settings.kokoro_model_resolved.exists():
+                model_path = str(settings.kokoro_model_resolved)
+            else:
+                candidates = list(Path(settings.models_dir).glob("kokoro*.onnx"))
+                if candidates:
+                    model_path = str(candidates[0])
+
+            if not model_path:
+                logger.warning(
+                    "Kokoro ONNX model not found in %s. TTS service disabled. "
+                    "Mount model files into %s to enable.",
+                    settings.models_dir,
+                    settings.models_dir,
+                )
+                self._ready = False
+                return
+
+            voices_path = None
+            if settings.kokoro_voices_resolved.exists():
+                voices_path = str(settings.kokoro_voices_resolved)
+            else:
+                candidates = list(Path(settings.models_dir).glob("voices*.bin"))
+                if candidates:
+                    voices_path = str(candidates[0])
+
+            if not voices_path:
+                logger.warning(
+                    "Kokoro voices pack not found in %s. TTS service disabled. "
+                    "Mount voices pack into %s to enable.",
+                    settings.models_dir,
+                    settings.models_dir,
+                )
+                self._ready = False
+                return
+
+            logger.info("Loading Kokoro TTS model from %s (voices: %s)", model_path, voices_path)
             self._kokoro = Kokoro(model_path, voices_path)
             self._ready = True
             logger.info("Kokoro TTS model loaded successfully.")
