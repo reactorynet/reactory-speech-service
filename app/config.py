@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # STT (faster-whisper)
     whisper_model_size: str = "base"
+    whisper_model_path: str | None = None
     whisper_device: str = "auto"
     whisper_compute_type: str = "auto"
 

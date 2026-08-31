@@ -26,14 +26,43 @@ class STTService:
             device = settings.whisper_device
             compute_type = settings.whisper_compute_type
 
+            # Check if a custom or pre-downloaded local model directory exists
+            model_to_load = None
+            if settings.whisper_model_path and Path(settings.whisper_model_path).exists():
+                model_to_load = settings.whisper_model_path
+            else:
+                candidates = [
+                    Path(settings.models_dir) / f"whisper-{model_size}",
+                    Path(settings.models_dir) / model_size,
+                    Path(settings.models_dir),
+                ]
+                for cand in candidates:
+                    if cand.exists() and (cand / "model.bin").exists():
+                        model_to_load = str(cand)
+                        break
+
+            if not model_to_load:
+                logger.warning(
+                    "No local Whisper model files found in %s. STT service disabled. "
+                    "Mount model files into %s/whisper-%s to enable.",
+                    settings.models_dir,
+                    settings.models_dir,
+                    model_size,
+                )
+                self._ready = False
+                return
+
             logger.info(
-                "Loading faster-whisper model: size=%s, device=%s, compute=%s",
-                model_size,
+                "Loading faster-whisper model from local path: %s, device=%s, compute=%s",
+                model_to_load,
                 device,
                 compute_type,
             )
             self._model = WhisperModel(
-                model_size, device=device, compute_type=compute_type
+                model_to_load,
+                device=device,
+                compute_type=compute_type,
+                local_files_only=True,
             )
             self._ready = True
             logger.info("faster-whisper model loaded successfully.")
