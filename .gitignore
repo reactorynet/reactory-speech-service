@@ -17,6 +17,7 @@ models/*.onnx
 models/*.bin
 models/*.pt
 models/faster-whisper-*/
+models/whisper-*/
 
 # IDE
 .idea/

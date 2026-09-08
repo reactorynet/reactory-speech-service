@@ -5,6 +5,40 @@ class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000, description="Text to synthesize")
     voice: str | None = Field(None, description="Voice ID (e.g., 'af_heart')")
     speed: float | None = Field(None, ge=0.25, le=4.0, description="Speech speed multiplier")
+    is_phonemes: bool = Field(default=False, description="Whether text is already phonetic (IPA) writing")
+    phonetic_preprocess: bool | None = Field(default=None, description="Explicitly enable/disable phonetic preprocessing")
+    custom_lexicon: dict[str, str] | None = Field(default=None, description="Per-request pronunciation overrides (word -> respelling or /ipa/)")
+
+
+class PhonemizeRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10000, description="Text to phonemize")
+    language: str | None = Field(default="en-us", description="Language code ('en-us' or 'en-gb')")
+    custom_lexicon: dict[str, str] | None = Field(default=None, description="Optional pronunciation overrides for phonemization")
+
+
+class PhonemizeResponse(BaseModel):
+    text: str = Field(..., description="Original input text")
+    normalized: str = Field(..., description="Normalized text after expansions")
+    phonemes: str = Field(..., description="Phonetic (IPA) representation")
+    language: str = Field(default="en-us", description="Language code used")
+
+
+class LexiconEntryRequest(BaseModel):
+    word: str = Field(..., min_length=1, max_length=200, description="Word or phrase to match")
+    replacement: str | None = Field(default=None, description="Phonetic respelling (e.g. 'koo-ber-net-eez')")
+    ipa: str | None = Field(default=None, description="Direct International Phonetic Alphabet (IPA) representation")
+
+
+class LexiconEntryResponse(BaseModel):
+    word: str
+    replacement: str | None = None
+    ipa: str | None = None
+    source: str = "custom"
+
+
+class LexiconListResponse(BaseModel):
+    entries: dict[str, dict]
+    total: int
 
 
 class TTSResponse(BaseModel):

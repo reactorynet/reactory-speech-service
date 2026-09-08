@@ -1,7 +1,7 @@
 """Shared test fixtures for the Reactory Speech Service."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 import numpy as np
 
 from fastapi.testclient import TestClient

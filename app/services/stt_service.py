@@ -1,6 +1,5 @@
 """STT service wrapping faster-whisper for speech-to-text transcription."""
 
-import io
 import logging
 import tempfile
 from pathlib import Path

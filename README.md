@@ -40,6 +40,19 @@ cd $REACTORY_SERVER/config/reactory
 docker compose up reactory_speech_service
 ```
 
+## Configuration
+
+Copy `.env.example` to `.env` and customize:
+
+| Variable | Default | Description |
+|---|---|---|
+| `SPEECH_SERVICE_PORT` | `8765` | Server port |
+| `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice |
+| `KOKORO_DEFAULT_SPEED` | `1.0` | Default speech speed |
+| `WHISPER_MODEL_SIZE` | `base` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
+| `WHISPER_DEVICE` | `auto` | Device: `auto`, `cpu`, `cuda` |
+| `PHONETIC_PROCESSING_ENABLED` | `False` | Enable phonetic text processing for improved pronunciation |
+
 ## API
 
 ### Health
@@ -49,7 +62,41 @@ docker compose up reactory_speech_service
 ### TTS (Text-to-Speech)
 - `POST /api/tts/synthesize` — Returns WAV audio bytes
 - `POST /api/tts/synthesize/json` — Returns base64-encoded audio in JSON
+- `POST /api/tts/phonemize` — Preview text normalization & phonetic (IPA) transcription
 - `WS /api/tts/stream` — WebSocket streaming (sentence-by-sentence)
+
+### Pronunciation Lexicon Management
+- `GET /api/tts/lexicon` — List all active pronunciation dictionary entries (built-in + custom)
+- `GET /api/tts/lexicon/custom` — List custom user-defined dictionary entries
+- `GET /api/tts/lexicon/{word}` — Get pronunciation for a specific word
+- `POST /api/tts/lexicon` — Add or update a word pronunciation (persisted to `data/lexicon.json`)
+- `DELETE /api/tts/lexicon/{word}` — Remove a custom pronunciation entry
+
+### Customizing Pronunciation
+
+You can customize pronunciation in four ways:
+
+1. **Persistent Dictionary via API**:
+   ```bash
+   curl -X POST http://localhost:8765/api/tts/lexicon \
+     -H 'Content-Type: application/json' \
+     -d '{"word": "Kubernetes", "replacement": "koo-ber-net-eez", "ipa": "kˈuːbɚnˌɛtiːz"}'
+   ```
+2. **Persistent Dictionary via File**: Edit `data/lexicon.json` (or mount into `/app/data/lexicon.json`).
+3. **Per-Request Overrides**: Pass `custom_lexicon` in `POST /api/tts/synthesize`:
+   ```json
+   {
+     "text": "Welcome Werner to the platform.",
+     "voice": "af_heart",
+     "custom_lexicon": {
+       "Werner": "Vair-ner"
+     }
+   }
+   ```
+4. **Inline Text Markup**:
+   - Respellings: `"Welcome [Werner|Vair-ner] to [K8s|koo-ber-net-eez]."`
+   - Direct IPA: `"Welcome [Werner|/vˈɛərnər/]."`
+   - SSML: `'Welcome <phoneme ph="vˈɛərnər">Werner</phoneme>.'`
 
 ### STT (Speech-to-Text)
 - `POST /api/stt/transcribe` — Upload audio file, get transcription

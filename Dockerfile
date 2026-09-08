@@ -20,13 +20,16 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code, scripts, and local models
-COPY app/ app/
-COPY scripts/ scripts/
+# Copy models and scripts first so heavy model layers are cached
 COPY models/ models/
+COPY scripts/ scripts/
 
 # Download models at build time if not present
 RUN python scripts/download_models.py
+
+# Copy application code and data
+COPY app/ app/
+COPY data/ data/
 
 EXPOSE 8765
 

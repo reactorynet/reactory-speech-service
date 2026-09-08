@@ -8,10 +8,11 @@ import numpy as np
 import soundfile as sf
 
 from app.config import settings
+from app.services.phonetic_converter import phonetic_converter
 
 logger = logging.getLogger(__name__)
 
-# Available Kokoro voices (American English subset)
+# Available Kokoro voices
 KOKORO_VOICES = {
     "af_heart": {"name": "Heart (Female)", "language": "en-us"},
     "af_bella": {"name": "Bella (Female)", "language": "en-us"},
@@ -30,7 +31,7 @@ SAMPLE_RATE = 24000
 
 
 class TTSService:
-    """Text-to-speech service using Kokoro ONNX."""
+    """Text-to-speech service using Kokoro ONNX with phonetic pre-processing and custom lexicons."""
 
     def __init__(self) -> None:
         self._kokoro = None
@@ -51,9 +52,7 @@ class TTSService:
 
             if not model_path:
                 logger.warning(
-                    "Kokoro ONNX model not found in %s. TTS service disabled. "
-                    "Mount model files into %s to enable.",
-                    settings.models_dir,
+                    "Kokoro ONNX model not found in %s. TTS service disabled.",
                     settings.models_dir,
                 )
                 self._ready = False
@@ -69,9 +68,7 @@ class TTSService:
 
             if not voices_path:
                 logger.warning(
-                    "Kokoro voices pack not found in %s. TTS service disabled. "
-                    "Mount voices pack into %s to enable.",
-                    settings.models_dir,
+                    "Kokoro voices pack not found in %s. TTS service disabled.",
                     settings.models_dir,
                 )
                 self._ready = False
@@ -82,9 +79,7 @@ class TTSService:
             self._ready = True
             logger.info("Kokoro TTS model loaded successfully.")
         except FileNotFoundError:
-            logger.error(
-                "Kokoro model files not found. Run 'make download-models' first."
-            )
+            logger.error("Kokoro model files not found. Run scripts/download_models.py first.")
             self._ready = False
         except Exception:
             logger.exception("Failed to load Kokoro TTS model")
@@ -95,7 +90,13 @@ class TTSService:
         return self._ready
 
     def synthesize(
-        self, text: str, voice: str | None = None, speed: float | None = None
+        self,
+        text: str,
+        voice: str | None = None,
+        speed: float | None = None,
+        is_phonemes: bool = False,
+        phonetic_preprocess: bool | None = None,
+        custom_lexicon: dict[str, str] | None = None,
     ) -> tuple[bytes, float]:
         """Synthesize text to WAV audio bytes.
 
@@ -112,19 +113,45 @@ class TTSService:
                 f"Unknown voice '{voice}'. Available: {list(KOKORO_VOICES.keys())}"
             )
 
-        samples, sample_rate = self._kokoro.create(text, voice=voice, speed=speed)
+        voice_lang = KOKORO_VOICES[voice].get("language", "en-us")
+
+        should_phonemize = (
+            phonetic_preprocess
+            if phonetic_preprocess is not None
+            else settings.phonetic_processing_enabled
+        )
+
+        if is_phonemes:
+            # Caller supplied phonemes directly
+            samples, sample_rate = self._kokoro.create(
+                text, voice=voice, speed=speed, lang=voice_lang, is_phonemes=True
+            )
+        elif should_phonemize and phonetic_converter.is_available:
+            phonetic_text = phonetic_converter.convert_to_phonetic(
+                text, language=voice_lang, custom_lexicon=custom_lexicon
+            )
+            samples, sample_rate = self._kokoro.create(
+                phonetic_text, voice=voice, speed=speed, lang=voice_lang, is_phonemes=True
+            )
+        else:
+            samples, sample_rate = self._kokoro.create(
+                text, voice=voice, speed=speed, lang=voice_lang, is_phonemes=False
+            )
 
         duration = len(samples) / sample_rate
         wav_bytes = self._samples_to_wav(samples, sample_rate)
         return wav_bytes, duration
 
     def synthesize_streaming(
-        self, text: str, voice: str | None = None, speed: float | None = None
+        self,
+        text: str,
+        voice: str | None = None,
+        speed: float | None = None,
+        is_phonemes: bool = False,
+        phonetic_preprocess: bool | None = None,
+        custom_lexicon: dict[str, str] | None = None,
     ):
-        """Generator that yields (wav_chunk_bytes, duration) per sentence.
-
-        Each chunk is a complete WAV file for one sentence fragment.
-        """
+        """Generator that yields (wav_chunk_bytes, duration) per sentence."""
         if not self._ready or self._kokoro is None:
             raise RuntimeError("TTS service not initialized")
 
@@ -136,18 +163,56 @@ class TTSService:
                 f"Unknown voice '{voice}'. Available: {list(KOKORO_VOICES.keys())}"
             )
 
-        # kokoro_onnx.create returns all audio at once; split by sentence for streaming
-        # For true streaming, we split text into sentences and synthesize each
+        voice_lang = KOKORO_VOICES[voice].get("language", "en-us")
+
+        should_phonemize = (
+            phonetic_preprocess
+            if phonetic_preprocess is not None
+            else settings.phonetic_processing_enabled
+        )
+
         sentences = self._split_sentences(text)
         for sentence in sentences:
             if not sentence.strip():
                 continue
-            samples, sample_rate = self._kokoro.create(
-                sentence, voice=voice, speed=speed
-            )
+
+            if is_phonemes:
+                samples, sample_rate = self._kokoro.create(
+                    sentence, voice=voice, speed=speed, lang=voice_lang, is_phonemes=True
+                )
+            elif should_phonemize and phonetic_converter.is_available:
+                p_text = phonetic_converter.convert_to_phonetic(
+                    sentence, language=voice_lang, custom_lexicon=custom_lexicon
+                )
+                samples, sample_rate = self._kokoro.create(
+                    p_text, voice=voice, speed=speed, lang=voice_lang, is_phonemes=True
+                )
+            else:
+                samples, sample_rate = self._kokoro.create(
+                    sentence, voice=voice, speed=speed, lang=voice_lang, is_phonemes=False
+                )
+
             duration = len(samples) / sample_rate
             wav_bytes = self._samples_to_wav(samples, sample_rate)
             yield wav_bytes, duration
+
+    def phonemize(
+        self,
+        text: str,
+        language: str = "en-us",
+        custom_lexicon: dict[str, str] | None = None,
+    ) -> dict:
+        """Convert text to phonetic writing and report normalized version."""
+        normalized = phonetic_converter.normalize_text(text, custom_lexicon=custom_lexicon)
+        phonemes = phonetic_converter.convert_to_phonetic(
+            text, language=language, custom_lexicon=custom_lexicon
+        )
+        return {
+            "text": text,
+            "normalized": normalized,
+            "phonemes": phonemes,
+            "language": language,
+        }
 
     def get_voices(self) -> list[dict]:
         """Return list of available voices."""

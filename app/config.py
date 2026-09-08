@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Models
     models_dir: str = "models"
 
+    # Phonetic processing
+    phonetic_processing_enabled: bool = True
+    lexicon_file_path: str = "data/lexicon.json"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
