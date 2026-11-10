@@ -1,5 +1,17 @@
 # Managed by reactory-workspace `seed` (policy: public-upstream).
 # CodeQL is free on public repositories. Actions are pinned to commit SHAs.
+#
+# LOCAL OVERRIDE (reactory-speech-service): the seeded template hard-codes
+# `javascript-typescript`, but this repository is a Python service with zero
+# .js/.ts files. The extractor found nothing to analyse and the job failed with
+# "Only found JavaScript or TypeScript files that were empty or contained syntax
+# errors." -> "CodeQL job status was configuration error", which is a red check
+# on every pull request that no change could ever turn green.
+#
+# `python` is the language this repository actually contains. `build-mode: none`
+# is correct for an interpreted language: CodeQL extracts the source directly
+# instead of running a build, so CI does not need espeak-ng, ffmpeg or the ~350MB
+# model weight download that a real build would require.
 name: CodeQL
 
 on:
@@ -15,7 +27,7 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze (javascript-typescript)
+    name: Analyze (python)
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -25,8 +37,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: github/codeql-action/init@9418214df1f2c4b8128c770156c409013b07d6b9 # v3.39.3
         with:
-          languages: javascript-typescript
+          languages: python
+          build-mode: none
           queries: security-and-quality
       - uses: github/codeql-action/analyze@9418214df1f2c4b8128c770156c409013b07d6b9 # v3.39.3
         with:
-          category: "/language:javascript-typescript"
+          category: "/language:python"
