@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -14,7 +15,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 
-from app.models.schemas import TranscriptionResult, TranscriptionSegment, ErrorResponse
+from app.models.schemas import ErrorResponse, TranscriptionResult, TranscriptionSegment
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +29,8 @@ router = APIRouter()
 )
 async def transcribe(
     request: Request,
-    file: UploadFile = File(..., description="Audio file (WAV, WebM, OGG, MP3)"),
-    language: str | None = Form(None, description="Language code (auto-detect if empty)"),
+    file: Annotated[UploadFile, File(description="Audio file (WAV, WebM, OGG, MP3)")],
+    language: Annotated[str | None, Form(description="Language code (auto-detect if empty)")] = None,
 ) -> TranscriptionResult:
     """Transcribe an uploaded audio file to text."""
     stt_service = request.app.state.stt_service

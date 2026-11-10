@@ -4,7 +4,12 @@ from pydantic import BaseModel, Field
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000, description="Text to synthesize")
     voice: str | None = Field(None, description="Voice ID (e.g., 'af_heart')")
-    speed: float | None = Field(None, ge=0.25, le=4.0, description="Speech speed multiplier")
+    speed: float | None = Field(
+        None,
+        ge=0.5,
+        le=2.0,
+        description="Speech speed multiplier (0.5-2.0, the range kokoro-onnx accepts)",
+    )
     is_phonemes: bool = Field(default=False, description="Whether text is already phonetic (IPA) writing")
     phonetic_preprocess: bool | None = Field(default=None, description="Explicitly enable/disable phonetic preprocessing")
     custom_lexicon: dict[str, str] | None = Field(default=None, description="Per-request pronunciation overrides (word -> respelling or /ipa/)")
@@ -66,9 +71,67 @@ class TranscriptionResult(BaseModel):
 
 
 class VoiceInfo(BaseModel):
+    """A single TTS voice.
+
+    ``id``/``name``/``language`` are always present; the remaining fields are
+    populated when the engine exposes the metadata that allows deriving them.
+    ``quality`` is ``null`` for the voices the catalogue of record does not grade.
+    """
+
     id: str
     name: str
     language: str
+    engine: str | None = Field(default=None, description="Engine id (e.g. 'kokoro')")
+    gender: str | None = Field(default=None, description="'female' or 'male'")
+    locale: str | None = Field(
+        default=None, description="Engine language code accepted during synthesis (e.g. 'en-us')"
+    )
+    quality: str | None = Field(
+        default=None,
+        description="Published quality grade (e.g. 'A', 'C-'); null when the catalogue does not grade the voice",
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Filterable tags (gender, language, region, grade-*, recommended, unrated)",
+    )
+
+
+class VoicesResponse(BaseModel):
+    voices: list[VoiceInfo]
+    total: int
+    engine: str | None = Field(default=None, description="Engine the catalogue was read from")
+    available: bool = Field(
+        default=True,
+        description=(
+            "Whether the engine that provides these voices is loaded. When false the "
+            "catalogue is the shipped-pack manifest and synthesis returns 503."
+        ),
+    )
+
+
+class EngineCapabilities(BaseModel):
+    """What one TTS engine can and cannot do."""
+
+    id: str
+    name: str
+    available: bool = False
+    license: str | None = None
+    languages: list[str] = Field(default_factory=list)
+    voice_count: int = 0
+    default_voice: str | None = None
+    native_rate: bool = False
+    native_pitch: bool = False
+    native_volume: bool = False
+    styles: list[str] = Field(default_factory=list)
+    supports_cloning: bool = False
+    supports_streaming: bool = False
+    sample_rates: list[int] = Field(default_factory=list)
+    gpu_required: bool = False
+    speed_range: list[float] = Field(default_factory=list)
+
+
+class CapabilitiesResponse(BaseModel):
+    engines: list[EngineCapabilities]
 
 
 class HealthResponse(BaseModel):

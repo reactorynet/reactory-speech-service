@@ -1,7 +1,7 @@
 """Tests for STT endpoints."""
 
-import json
 import io
+import json
 
 
 def test_transcribe_returns_text(client, mock_stt_service, sample_wav_bytes):

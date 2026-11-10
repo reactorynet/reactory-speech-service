@@ -1,15 +1,20 @@
 """Shared test fixtures for the Reactory Speech Service."""
 
-import pytest
 from unittest.mock import MagicMock
-import numpy as np
 
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture
 def mock_tts_service():
-    """A mock TTSService that returns predictable audio."""
+    """A mock TTSService that returns predictable audio.
+
+    ``get_voices`` returns the same descriptor shape the real service produces
+    (all keys populated), so endpoint tests that filter the catalogue work
+    against this double instead of raising ``KeyError``.
+    """
     service = MagicMock()
     service.is_ready = True
     # Generate 0.5s of silence as WAV bytes
@@ -17,6 +22,7 @@ def mock_tts_service():
     samples = np.zeros(sample_rate // 2, dtype=np.float32)
 
     import io
+
     import soundfile as sf
 
     buf = io.BytesIO()
@@ -26,9 +32,28 @@ def mock_tts_service():
 
     service.synthesize.return_value = (fake_wav, 0.5)
     service.synthesize_streaming.return_value = iter([(fake_wav, 0.5)])
+    service.voice_ids = ["af_heart", "am_adam"]
     service.get_voices.return_value = [
-        {"id": "af_heart", "name": "Heart (Female)", "language": "en-us"},
-        {"id": "am_adam", "name": "Adam (Male)", "language": "en-us"},
+        {
+            "id": "af_heart",
+            "name": "Heart",
+            "language": "en-US",
+            "engine": "kokoro",
+            "gender": "female",
+            "locale": "en-us",
+            "quality": "A",
+            "tags": ["female", "english", "american", "grade-a", "recommended"],
+        },
+        {
+            "id": "am_adam",
+            "name": "Adam",
+            "language": "en-US",
+            "engine": "kokoro",
+            "gender": "male",
+            "locale": "en-us",
+            "quality": "F+",
+            "tags": ["male", "english", "american", "grade-f-plus"],
+        },
     ]
     return service
 
@@ -78,6 +103,7 @@ def client(app):
 def sample_wav_bytes():
     """Generate a minimal valid WAV file for testing."""
     import io
+
     import soundfile as sf
 
     samples = np.zeros(24000, dtype=np.float32)  # 1 second of silence
