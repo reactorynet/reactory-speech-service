@@ -2,6 +2,10 @@
 
 Local TTS and STT microservice for the Reactory platform, providing text-to-speech (Kokoro-82M ONNX) and speech-to-text (faster-whisper) capabilities.
 
+> **Direction and roadmap:** this service is built open source, self-hosted and edge-first — no paid
+> TTS API is required for any capability. Architecture decisions, the delivery roadmap and the full
+> voice catalogue live in [`docs/`](docs/README.md).
+
 ## Quick Start
 
 ### Prerequisites
