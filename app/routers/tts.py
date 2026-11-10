@@ -4,24 +4,49 @@ import base64
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 
 from app.models.schemas import (
-    TTSRequest,
-    TTSResponse,
+    CapabilitiesResponse,
+    EngineCapabilities,
     ErrorResponse,
-    PhonemizeRequest,
-    PhonemizeResponse,
     LexiconEntryRequest,
     LexiconEntryResponse,
     LexiconListResponse,
+    PhonemizeRequest,
+    PhonemizeResponse,
+    TTSRequest,
+    TTSResponse,
+    VoiceInfo,
+    VoicesResponse,
 )
 from app.services.phonetic_converter import phonetic_converter
+from app.services.tts_service import SAMPLE_RATE
+from app.services.voice_registry import filter_catalogue
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _audio_headers(duration: float) -> dict[str, str]:
+    """Audio metadata headers, emitted under both canonical and alias names.
+
+    The service historically sent ``X-Audio-Sample-Rate`` while clients read
+    ``x-sample-rate``, silently falling back to a default.  Both spellings are
+    emitted so existing clients work unchanged.
+    """
+    sample_rate = str(SAMPLE_RATE)
+    duration_str = str(round(duration, 3))
+    return {
+        "X-Sample-Rate": sample_rate,
+        "X-Audio-Sample-Rate": sample_rate,
+        "X-Duration": duration_str,
+        "X-Audio-Duration": duration_str,
+        "X-Format": "wav",
+        "X-Audio-Format": "wav",
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -60,11 +85,7 @@ async def synthesize(request: Request, body: TTSRequest) -> Response:
         return Response(
             content=wav_bytes,
             media_type="audio/wav",
-            headers={
-                "X-Audio-Duration": str(round(duration, 3)),
-                "X-Audio-Format": "wav",
-                "X-Audio-Sample-Rate": "24000",
-            },
+            headers=_audio_headers(duration),
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -106,6 +127,51 @@ async def synthesize_json(request: Request, body: TTSRequest) -> TTSResponse:
     except Exception:
         logger.exception("TTS synthesis failed")
         raise HTTPException(status_code=500, detail="Synthesis failed")
+
+
+@router.get("/voices", response_model=VoicesResponse)
+async def list_voices(
+    request: Request,
+    engine: str | None = Query(None, description="Filter by engine id (e.g. 'kokoro')"),
+    language: str | None = Query(
+        None, description="Filter by language tag or engine code (e.g. 'en-US', 'en-us', 'ja')"
+    ),
+    gender: str | None = Query(None, description="Filter by gender ('female' or 'male')"),
+    tag: str | None = Query(None, description="Filter by tag (e.g. 'recommended', 'grade-a')"),
+) -> VoicesResponse:
+    """List the voices exposed by the loaded engine, with optional filters."""
+    tts_service = request.app.state.tts_service
+    voices = filter_catalogue(
+        tts_service.get_voices(),
+        engine=engine,
+        language=language,
+        gender=gender,
+        tag=tag,
+    )
+    return VoicesResponse(voices=voices, total=len(voices))
+
+
+@router.get("/voices/{voice_id}", response_model=VoiceInfo)
+async def get_voice(voice_id: str, request: Request) -> VoiceInfo:
+    """Describe a single voice, or 404 when it is not present in the voice pack."""
+    tts_service = request.app.state.tts_service
+    voice = tts_service.get_voice(voice_id)
+    if voice is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Unknown voice '{voice_id}'. GET /api/tts/voices lists the "
+                f"{len(tts_service.voice_ids)} voices available on this deployment."
+            ),
+        )
+    return VoiceInfo(**voice)
+
+
+@router.get("/capabilities", response_model=CapabilitiesResponse)
+async def capabilities(request: Request) -> CapabilitiesResponse:
+    """Report the capabilities of every TTS engine available in this deployment."""
+    tts_service = request.app.state.tts_service
+    return CapabilitiesResponse(engines=[EngineCapabilities(**tts_service.capabilities())])
 
 
 @router.post(

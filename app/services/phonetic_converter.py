@@ -122,7 +122,7 @@ class PhoneticConverter:
             self._tokenizer = Tokenizer()
             self._ready = True
             logger.info("PhoneticConverter initialized successfully with Kokoro Tokenizer.")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - optional espeak/tokenizer probe at startup
             logger.warning("Could not initialize Kokoro Tokenizer: %s", e)
             self._ready = False
 
@@ -143,7 +143,7 @@ class PhoneticConverter:
                         self._custom_lexicon = data.get("entries", {})
                         self._last_mtime = mtime
                         logger.info("Loaded %d custom lexicon entries from %s", len(self._custom_lexicon), lexicon_file)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - best-effort lexicon reload, never fatal
                 logger.warning("Failed to read custom lexicon from %s: %s", lexicon_file, e)
                 if not self._custom_lexicon:
                     self._custom_lexicon = {}
@@ -158,7 +158,7 @@ class PhoneticConverter:
             with open(lexicon_file, "w", encoding="utf-8") as f:
                 json.dump({"entries": self._custom_lexicon}, f, indent=2, ensure_ascii=False)
             logger.info("Saved %d custom lexicon entries to %s", len(self._custom_lexicon), lexicon_file)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - lexicon persistence is best-effort
             logger.error("Failed to save custom lexicon to %s: %s", lexicon_file, e)
 
     def get_all_entries(self) -> dict[str, dict]:
@@ -330,7 +330,7 @@ class PhoneticConverter:
             result = " ".join(phoneme_parts).strip()
             logger.debug("Phonetic result: '%s'", result[:60])
             return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - fall back to normalized text on any G2P error
             logger.warning("Phonetic conversion failed: %s", e)
             return normalized
 

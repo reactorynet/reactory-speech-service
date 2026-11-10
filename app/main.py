@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
-from app.services.tts_service import TTSService
+from app.routers import health, stt, tts
 from app.services.stt_service import STTService
-from app.routers import health, tts, stt
+from app.services.tts_service import TTSService
 
 logging.basicConfig(
     level=logging.INFO,

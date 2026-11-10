@@ -1,9 +1,9 @@
 """Shared test fixtures for the Reactory Speech Service."""
 
-import pytest
 from unittest.mock import MagicMock
-import numpy as np
 
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -17,6 +17,7 @@ def mock_tts_service():
     samples = np.zeros(sample_rate // 2, dtype=np.float32)
 
     import io
+
     import soundfile as sf
 
     buf = io.BytesIO()
@@ -78,6 +79,7 @@ def client(app):
 def sample_wav_bytes():
     """Generate a minimal valid WAV file for testing."""
     import io
+
     import soundfile as sf
 
     samples = np.zeros(24000, dtype=np.float32)  # 1 second of silence

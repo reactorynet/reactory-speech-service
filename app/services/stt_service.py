@@ -159,7 +159,9 @@ class STTService:
         elif audio_bytes[:3] == b"ID3" or audio_bytes[:2] == b"\xff\xfb":
             suffix = ".mp3"
 
-        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        # The temp file must outlive this function: faster-whisper opens it later by
+        # path, so it cannot be managed by a context manager here.
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)  # noqa: SIM115
         tmp.write(audio_bytes)
         tmp.flush()
         tmp.close()
