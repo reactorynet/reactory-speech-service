@@ -1,24 +1,54 @@
 # Managed by reactory-workspace `seed` (policy: public-upstream).
 # Fails a pull request that adds a dependency with a known high/critical
-# vulnerability or a disallowed licence. Free on public repositories.
+# vulnerability or a disallowed licence.
+#
+# LOCAL OVERRIDE (reactory-speech-service): the seeded template uses
+# actions/dependency-review-action, which requires GitHub's repository
+# Dependency Graph. Dependency Graph is not available on this repository, so the
+# job failed on every pull request with:
+#
+#   ##[error]Dependency review is not supported on this repository.
+#   Please ensure that Dependency graph is enabled
+#
+# A check that can never pass is worse than no check: it trains reviewers to
+# ignore red X's, and it masks a genuine regression when one appears. This
+# repository is a Python service, so the audit is run with pip-audit against
+# requirements.txt instead. That is the capability the workflow was meant to
+# provide, it needs nothing from the GitHub Dependency Graph, and it matches
+# ADR-0001 (open source, self-hosted, no vendor dependency for a core capability).
+#
+# If the Dependency Graph is enabled for this repository later, this job can be
+# narrowed to a diff-only review by adding actions/dependency-review-action back
+# alongside pip-audit; the two are complementary rather than exclusive.
 name: Dependency review
 
 on:
   pull_request:
     branches: ["master"]
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   dependency-review:
+    name: Dependency review (pip-audit)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
+
+      - name: Audit Python dependencies for known vulnerabilities
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check "pip-audit>=2.7"
+          # requirements.txt is a floor-pinned manifest (>=), so pip-audit
+          # resolves it the way pip would and reports advisories for the
+          # resolved versions. Exit code 1 on any vulnerability fails the job.
+          python3 -m pip_audit \
+            --requirement requirements.txt \
+            --progress-spinner off \
+            --desc
