@@ -33,20 +33,20 @@ speech service. It is the reference for every ticket raised against this reposit
 
 ## Tickets
 
-Each phase maps to one support ticket. Ticket references are recorded on the ticket itself and in
-the roadmap; this table is the stable map.
+Each phase maps to one support ticket. The `SPEECH-nnn` label is the stable planning id; the
+reference is the immutable ticket key in the support system.
 
-| Phase | Ticket | Scope | State |
-|---|---|---|---|
-| 0 | `SPEECH-001` | Unlock the 54-voice catalogue, expose a voice API, fix schema/header defects | In progress |
-| 1 | `SPEECH-002` | Engine adapter layer, direction model, capabilities API | Backlog |
-| 2 | `SPEECH-003` | Voice design by style-vector blending + presets + previews | Backlog |
-| 3 | `SPEECH-004` | Non-blocking inference, per-engine concurrency, synthesis cache, engine lifecycle | Backlog |
-| 4 | `SPEECH-005` | Expressive engine adapter (Chatterbox, MIT) for emotion and paralinguistic tags | Backlog |
-| 5 | `SPEECH-006` | Consent-first voice cloning with watermarking and provenance | Blocked on policy |
-| 6 | `SPEECH-007` | Evaluation harness, golden corpus and routing policy | Backlog |
-| 7 | `SPEECH-008` | STT streaming, word timestamps, temp-file cleanup, model tiering | Backlog |
-| 8 | `SPEECH-009` | Optional hosted premium adapter with cost guardrails | Deferred |
+| Phase | Planning id | Scope | State | Ticket reference |
+|---|---|---|---|---|
+| 0 | `SPEECH-001` | Unlock the 54-voice catalogue, expose a voice API, fix schema/header defects | In progress | `REACTORY-302016408/20261110/2432217528` |
+| 1 | `SPEECH-002` | Engine adapter layer, direction model, capabilities API | Backlog | `REACTORY-302016408/20261110/1663424173` |
+| 2 | `SPEECH-003` | Voice design by style-vector blending + presets + previews | Backlog | `REACTORY-302016408/20261110/1712540096` |
+| 3 | `SPEECH-004` | Non-blocking inference, per-engine concurrency, synthesis cache, engine lifecycle | Backlog | `REACTORY-302016408/20261110/3808700412` |
+| 4 | `SPEECH-005` | Expressive engine adapter (Chatterbox, MIT) for emotion and paralinguistic tags | Backlog | `REACTORY-302016408/20261110/4004237369` |
+| 5 | `SPEECH-006` | Consent-first voice cloning with watermarking and provenance | Blocked on policy | `REACTORY-302016408/20261110/166562983` |
+| 6 | `SPEECH-007` | Evaluation harness, golden corpus and routing policy | Backlog | `REACTORY-302016408/20261110/1252552414` |
+| 7 | `SPEECH-008` | STT streaming, word timestamps, temp-file cleanup, model tiering | Backlog | `REACTORY-302016408/20261110/2269269873` |
+| 8 | `SPEECH-009` | Optional hosted premium adapter with cost guardrails | Deferred | `REACTORY-302016408/20261110/1925583329` |
 
 ## Quick orientation
 
