@@ -4,8 +4,15 @@ import base64
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from app.models.schemas import (
     CapabilitiesResponse,
@@ -22,7 +29,7 @@ from app.models.schemas import (
     VoicesResponse,
 )
 from app.services.phonetic_converter import phonetic_converter
-from app.services.tts_service import SAMPLE_RATE
+from app.services.tts_service import ENGINE_ID, SAMPLE_RATE
 from app.services.voice_registry import filter_catalogue
 
 logger = logging.getLogger(__name__)
@@ -35,7 +42,8 @@ def _audio_headers(duration: float) -> dict[str, str]:
 
     The service historically sent ``X-Audio-Sample-Rate`` while clients read
     ``x-sample-rate``, silently falling back to a default.  Both spellings are
-    emitted so existing clients work unchanged.
+    emitted — on the binary *and* the JSON synthesis endpoint — so existing
+    clients work unchanged regardless of which one they read.
     """
     sample_rate = str(SAMPLE_RATE)
     duration_str = str(round(duration, 3))
@@ -95,8 +103,15 @@ async def synthesize(request: Request, body: TTSRequest) -> Response:
 
 
 @router.post("/synthesize/json", response_model=TTSResponse)
-async def synthesize_json(request: Request, body: TTSRequest) -> TTSResponse:
-    """Synthesize text or phonemes to speech, returning base64-encoded audio in JSON."""
+async def synthesize_json(
+    request: Request, body: TTSRequest, response: Response
+) -> TTSResponse:
+    """Synthesize text or phonemes to speech, returning base64-encoded audio in JSON.
+
+    The same audio metadata is returned in the body *and* as ``X-Sample-Rate`` /
+    ``X-Audio-Sample-Rate`` (plus the duration and format aliases), so a consumer
+    can read either endpoint the same way.
+    """
     tts_service = request.app.state.tts_service
     if not tts_service.is_ready:
         raise HTTPException(status_code=503, detail="TTS service not available")
@@ -116,11 +131,12 @@ async def synthesize_json(request: Request, body: TTSRequest) -> TTSResponse:
             speed=body.speed,
             **kwargs,
         )
+        response.headers.update(_audio_headers(duration))
         return TTSResponse(
             audio_base64=base64.b64encode(wav_bytes).decode("ascii"),
             duration=round(duration, 3),
             format="wav",
-            sample_rate=24000,
+            sample_rate=SAMPLE_RATE,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -128,6 +144,10 @@ async def synthesize_json(request: Request, body: TTSRequest) -> TTSResponse:
         logger.exception("TTS synthesis failed")
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
+
+# ─────────────────────────────────────────────────────────────
+# Voice Catalogue Endpoints
+# ─────────────────────────────────────────────────────────────
 
 @router.get("/voices", response_model=VoicesResponse)
 async def list_voices(
@@ -137,9 +157,15 @@ async def list_voices(
         None, description="Filter by language tag or engine code (e.g. 'en-US', 'en-us', 'ja')"
     ),
     gender: str | None = Query(None, description="Filter by gender ('female' or 'male')"),
-    tag: str | None = Query(None, description="Filter by tag (e.g. 'recommended', 'grade-a')"),
+    tag: str | None = Query(
+        None, description="Filter by tag (e.g. 'recommended', 'grade-c-plus', 'unrated')"
+    ),
 ) -> VoicesResponse:
-    """List the voices exposed by the loaded engine, with optional filters."""
+    """List the voices exposed by the loaded engine, with optional filters.
+
+    ``available`` reports whether the engine is actually loaded: when it is not,
+    the catalogue is the shipped-pack manifest and synthesis will return 503.
+    """
     tts_service = request.app.state.tts_service
     voices = filter_catalogue(
         tts_service.get_voices(),
@@ -148,7 +174,12 @@ async def list_voices(
         gender=gender,
         tag=tag,
     )
-    return VoicesResponse(voices=voices, total=len(voices))
+    return VoicesResponse(
+        voices=voices,
+        total=len(voices),
+        engine=ENGINE_ID,
+        available=bool(tts_service.is_ready),
+    )
 
 
 @router.get("/voices/{voice_id}", response_model=VoiceInfo)

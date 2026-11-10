@@ -1,6 +1,7 @@
 """Tests for the Kokoro voice catalogue, the voice API and synthesis guards."""
 
 import logging
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -14,7 +15,9 @@ from app.services.tts_service import TTSService
 from app.services.voice_registry import (
     KOKORO_SAMPLE_RATE,
     LANGUAGE_FAMILIES,
+    QUALITY_GRADES,
     SHIPPED_VOICE_IDS,
+    UNGRADED_VOICE_IDS,
     build_catalogue,
     describe_voice,
     filter_catalogue,
@@ -22,9 +25,15 @@ from app.services.voice_registry import (
 
 MODEL_PATH = Path(settings.kokoro_model_resolved)
 VOICES_PATH = Path(settings.kokoro_voices_resolved)
+CATALOGUE_DOC = Path(__file__).resolve().parent.parent / "docs" / "voices" / "kokoro-voice-catalogue.md"
+
 requires_models = pytest.mark.skipif(
     not (MODEL_PATH.exists() and VOICES_PATH.exists()),
     reason="Kokoro model files are not present in models/",
+)
+requires_catalogue_doc = pytest.mark.skipif(
+    not CATALOGUE_DOC.exists(),
+    reason="docs/voices/kokoro-voice-catalogue.md is not on this branch (owned by PR #6)",
 )
 
 # One representative voice and sample text per language family.
@@ -38,6 +47,55 @@ LANGUAGE_SAMPLES = {
     "hi": ("hf_alpha", "नमस्ते, मैं एक सहायक हूँ।"),
     "it": ("if_sara", "Ciao, sono un assistente vocale."),
     "pt-BR": ("pf_dora", "Olá, sou um assistente de voz."),
+}
+
+# Grades pinned against docs/voices/kokoro-voice-catalogue.md. The four
+# ``corrected`` entries are the ones an earlier revision got wrong; they are
+# listed explicitly so the table cannot silently drift again.
+DOCUMENTED_GRADES = {
+    # corrected entries — assert these first if this test ever fails
+    "bf_lily": "C",
+    "ff_siwis": "B-",
+    "jf_nezumi": "C-",
+    "jm_kumo": "C-",
+    # remaining grade buckets, one or more representatives each
+    "af_heart": "A",
+    "af_bella": "A-",
+    "af_nicole": "B-",
+    "bf_emma": "B-",
+    "af_aoede": "C+",
+    "af_kore": "C+",
+    "af_sarah": "C+",
+    "am_fenrir": "C+",
+    "am_michael": "C+",
+    "am_puck": "C+",
+    "jf_alpha": "C+",
+    "af_alloy": "C",
+    "af_nova": "C",
+    "bf_isabella": "C",
+    "bm_fable": "C",
+    "bm_george": "C",
+    "hf_alpha": "C",
+    "hf_beta": "C",
+    "hm_omega": "C",
+    "hm_psi": "C",
+    "if_sara": "C",
+    "im_nicola": "C",
+    "jf_gongitsune": "C",
+    "jf_tebukuro": "C",
+    "zf_xiaoxiao": "C",
+    "zm_yunyang": "C",
+    "af_sky": "C-",
+    "af_jessica": "D",
+    "af_river": "D",
+    "am_echo": "D",
+    "am_eric": "D",
+    "am_liam": "D",
+    "am_onyx": "D",
+    "bf_alice": "D",
+    "bm_daniel": "D",
+    "am_santa": "D-",
+    "am_adam": "F+",
 }
 
 
@@ -97,13 +155,68 @@ def fake_engine_client(fake_engine_service):
 # ─────────────────────────────────────────────────────────────
 
 def test_catalogue_covers_all_shipped_voices():
-    """The metadata table mirrors the 54-voice, 9-language pack."""
+    """The manifest and the catalogue describe the same 54-voice, 9-language pack."""
     voices = build_catalogue(SHIPPED_VOICE_IDS)
 
     assert len(voices) == 54
     assert len({voice["id"] for voice in voices}) == 54
     assert len({voice["language"] for voice in voices}) == 9
     assert {voice["id"] for voice in voices} == set(SHIPPED_VOICE_IDS)
+
+
+def test_quality_grades_match_the_catalogue_of_record():
+    """Pin the grades transcribed from docs/voices/kokoro-voice-catalogue.md.
+
+    Includes the four ids an earlier revision had wrong (bf_lily C, ff_siwis B-,
+    jf_nezumi C-, jm_kumo C-).
+    """
+    drifted = {
+        voice_id: {"expected": grade, "actual": QUALITY_GRADES.get(voice_id)}
+        for voice_id, grade in DOCUMENTED_GRADES.items()
+        if QUALITY_GRADES.get(voice_id) != grade
+    }
+    assert drifted == {}, f"quality grades drifted from the catalogue of record: {drifted}"
+
+
+def test_ungraded_voices_are_not_given_invented_grades():
+    """The 7 voices the catalogue does not grade report ``quality: None``."""
+    assert sorted(UNGRADED_VOICE_IDS) == [
+        "bm_lewis",
+        "ef_dora",
+        "em_alex",
+        "em_santa",
+        "pf_dora",
+        "pm_alex",
+        "pm_santa",
+    ]
+
+    for voice_id in UNGRADED_VOICE_IDS:
+        assert voice_id not in QUALITY_GRADES, f"{voice_id} must not carry an invented grade"
+        descriptor = describe_voice(voice_id)
+        assert descriptor is not None
+        assert descriptor["quality"] is None
+        assert "unrated" in descriptor["tags"]
+        assert not [tag for tag in descriptor["tags"] if tag.startswith("grade-")]
+
+
+def test_grade_table_and_manifest_partition_the_pack():
+    """Graded ∪ ungraded == shipped, and the two sets are disjoint.
+
+    The manifest is a literal, deliberately not derived from the grade table, so a
+    voice added to a future pack without a grade row still appears in discovery.
+    """
+    graded = set(QUALITY_GRADES)
+    ungraded = set(UNGRADED_VOICE_IDS)
+
+    assert graded & ungraded == set()
+    assert graded | ungraded == set(SHIPPED_VOICE_IDS)
+    assert len(graded) == 47
+    assert len(ungraded) == 7
+
+
+def test_grade_table_has_no_duplicate_or_orphan_entries():
+    for voice_id in QUALITY_GRADES:
+        assert voice_id in SHIPPED_VOICE_IDS, f"{voice_id} is graded but not shipped"
 
 
 @pytest.mark.parametrize(
@@ -129,11 +242,10 @@ def test_describe_voice_derives_metadata_from_id(voice_id, language, locale, gen
     assert descriptor["locale"] == locale
     assert descriptor["gender"] == gender
     assert descriptor["engine"] == "kokoro"
-    assert descriptor["quality"]
     assert descriptor["name"]
 
 
-def test_every_shipped_voice_parses_and_is_graded():
+def test_every_shipped_voice_parses():
     for voice_id in SHIPPED_VOICE_IDS:
         descriptor = describe_voice(voice_id)
         assert descriptor is not None, voice_id
@@ -163,6 +275,7 @@ def test_off_scheme_engine_voices_are_exposed_not_dropped():
 
     assert [voice["id"] for voice in voices] == ["legacy_voice"]
     assert voices[0]["language"] == "und"
+    assert voices[0]["quality"] is None
 
 
 def test_build_catalogue_sorted_by_language_then_id():
@@ -182,15 +295,78 @@ def test_filter_catalogue_is_case_insensitive():
     assert len(filter_catalogue(voices, language="en-us")) == 20
     assert len(filter_catalogue(voices, language="EN-US")) == 20
     assert len(filter_catalogue(voices, gender="MALE")) == 25
-    assert len(filter_catalogue(voices, tag="GRADE-A")) == 2
     assert len(filter_catalogue(voices, engine="KOKORO")) == 54
     assert filter_catalogue(voices, engine="piper") == []
 
 
-def test_recommended_tag_marks_top_graded_voices():
+def test_grade_tags_distinguish_plus_and_minus():
+    """``grade-a`` must not silently mean both A and A-."""
+    voices = {voice["id"]: voice for voice in build_catalogue(SHIPPED_VOICE_IDS)}
+
+    assert "grade-a" in voices["af_heart"]["tags"]
+    assert "grade-a-minus" in voices["af_bella"]["tags"]
+    assert "grade-a" not in voices["af_bella"]["tags"]
+    assert "grade-c" in voices["bf_lily"]["tags"]
+    assert "grade-c-minus" in voices["jf_nezumi"]["tags"]
+    assert "grade-b-minus" in voices["ff_siwis"]["tags"]
+
+    grade_a = filter_catalogue(voices.values(), tag="grade-a")
+    assert [voice["id"] for voice in grade_a] == ["af_heart"]
+
+
+def test_recommended_tag_matches_the_documented_customer_facing_threshold():
+    """The catalogue says "treat C+ and above as candidates for customer-facing defaults"."""
     voices = filter_catalogue(build_catalogue(SHIPPED_VOICE_IDS), tag="recommended")
 
-    assert {voice["id"] for voice in voices} == {"af_heart", "af_bella"}
+    assert sorted(voice["id"] for voice in voices) == [
+        "af_aoede",
+        "af_bella",
+        "af_heart",
+        "af_kore",
+        "af_nicole",
+        "af_sarah",
+        "am_fenrir",
+        "am_michael",
+        "am_puck",
+        "bf_emma",
+        "ff_siwis",
+        "jf_alpha",
+    ]
+    assert len(voices) == 12
+    assert all(voice["quality"] in {"A", "A-", "B-", "C+"} for voice in voices)
+
+
+def test_unrated_tag_filter_returns_the_ungraded_voices():
+    voices = filter_catalogue(build_catalogue(SHIPPED_VOICE_IDS), tag="unrated")
+
+    assert sorted(voice["id"] for voice in voices) == sorted(UNGRADED_VOICE_IDS)
+
+
+@requires_catalogue_doc
+def test_grade_table_matches_the_catalogue_document_on_disk():
+    """Guard against drift once docs/voices/kokoro-voice-catalogue.md lands (PR #6)."""
+    text = CATALOGUE_DOC.read_text(encoding="utf-8")
+    section = text.split("## Quality grades")[1].split("## ")[0]
+
+    documented: dict[str, str] = {}
+    blocks: dict[str, str] = {}
+    for line in section.splitlines():
+        match = re.match(r"\|\s*([A-F][+-]?)\s*\|\s*(.+?)\s*\|", line)
+        if not match:
+            continue
+        grade, listed = match.group(1), match.group(2)
+        for token in re.findall(r"`([a-z]{2}_[a-z]+|[a-z]{2}_\*)`", listed):
+            if token.endswith("_*"):
+                blocks[token[:-1]] = grade
+            else:
+                documented[token] = grade
+
+    for prefix, grade in blocks.items():
+        for voice_id in SHIPPED_VOICE_IDS:
+            if voice_id.startswith(prefix):
+                documented[voice_id] = grade
+
+    assert documented == QUALITY_GRADES
 
 
 # ─────────────────────────────────────────────────────────────
@@ -223,6 +399,34 @@ def test_list_voices_descriptor_shape(catalogue_client):
     }
 
 
+def test_list_voices_reports_corrected_and_unrated_grades(catalogue_client):
+    response = catalogue_client.get("/api/tts/voices")
+    voices = {voice["id"]: voice for voice in response.json()["voices"]}
+
+    assert voices["bf_lily"]["quality"] == "C"
+    assert voices["ff_siwis"]["quality"] == "B-"
+    assert voices["jf_nezumi"]["quality"] == "C-"
+    assert voices["jm_kumo"]["quality"] == "C-"
+
+    for voice_id in UNGRADED_VOICE_IDS:
+        assert voices[voice_id]["quality"] is None
+        assert "unrated" in voices[voice_id]["tags"]
+
+
+def test_list_voices_reports_engine_availability(catalogue_client):
+    """Discovery before load says so, rather than pretending synthesis will work."""
+    body = catalogue_client.get("/api/tts/voices").json()
+
+    assert body["engine"] == "kokoro"
+    assert body["available"] is False
+
+
+def test_list_voices_reports_availability_when_engine_is_loaded(fake_engine_client):
+    body = fake_engine_client.get("/api/tts/voices").json()
+
+    assert body["available"] is True
+
+
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -233,7 +437,9 @@ def test_list_voices_descriptor_shape(catalogue_client):
         ("?language=zh", 8),
         ("?gender=female", 29),
         ("?gender=male", 25),
-        ("?tag=recommended", 2),
+        ("?tag=recommended", 12),
+        ("?tag=unrated", 7),
+        ("?tag=grade-c-minus", 3),
         ("?engine=kokoro", 54),
         ("?engine=piper", 0),
         ("?engine=kokoro&language=ja", 5),
@@ -247,6 +453,14 @@ def test_list_voices_filters(catalogue_client, query, expected):
     body = response.json()
     assert body["total"] == expected
     assert len(body["voices"]) == expected
+
+
+def test_list_voices_works_against_the_shared_mock_fixture(client):
+    """The standard fixture returns the full descriptor shape (no KeyError)."""
+    response = client.get("/api/tts/voices?gender=female")
+
+    assert response.status_code == 200
+    assert [voice["id"] for voice in response.json()["voices"]] == ["af_heart"]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -263,6 +477,13 @@ def test_get_voice_returns_descriptor(catalogue_client):
     assert body["language"] == "en-US"
     assert body["engine"] == "kokoro"
     assert body["quality"] == "A"
+
+
+def test_get_ungraded_voice_returns_null_quality(catalogue_client):
+    response = catalogue_client.get("/api/tts/voices/bm_lewis")
+
+    assert response.status_code == 200
+    assert response.json()["quality"] is None
 
 
 def test_get_unknown_voice_returns_404(catalogue_client):
@@ -319,6 +540,12 @@ def test_capabilities_reports_custom_pack_voices():
     assert kokoro["available"] is True
 
 
+def test_capabilities_reports_unavailable_engine(catalogue_client):
+    kokoro = catalogue_client.get("/api/tts/capabilities").json()["engines"][0]
+
+    assert kokoro["available"] is False
+
+
 # ─────────────────────────────────────────────────────────────
 # Speed validation
 # ─────────────────────────────────────────────────────────────
@@ -360,7 +587,7 @@ def test_websocket_speed_is_clamped_before_inference(fake_engine_client, fake_en
 # Synthesis headers
 # ─────────────────────────────────────────────────────────────
 
-def test_synthesis_emits_both_sample_rate_headers(fake_engine_client):
+def test_binary_synthesis_emits_both_sample_rate_headers(fake_engine_client):
     response = fake_engine_client.post(
         "/api/tts/synthesize",
         json={"text": "Hello.", "voice": "af_heart", "phonetic_preprocess": False},
@@ -372,6 +599,26 @@ def test_synthesis_emits_both_sample_rate_headers(fake_engine_client):
     assert response.headers["x-duration"] == response.headers["x-audio-duration"]
     assert response.headers["x-format"] == "wav"
     assert response.headers["x-audio-format"] == "wav"
+
+
+def test_json_synthesis_emits_both_sample_rate_headers(fake_engine_client):
+    """The JSON endpoint carries the same metadata, so the guarantee is endpoint-agnostic."""
+    response = fake_engine_client.post(
+        "/api/tts/synthesize/json",
+        json={"text": "Hello.", "voice": "af_heart", "phonetic_preprocess": False},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-sample-rate"] == "24000"
+    assert response.headers["x-audio-sample-rate"] == "24000"
+    assert response.headers["x-duration"] == "0.1"
+    assert response.headers["x-audio-duration"] == "0.1"
+    assert response.headers["x-format"] == "wav"
+    assert response.headers["x-audio-format"] == "wav"
+    # The body still carries the same values.
+    body = response.json()
+    assert body["sample_rate"] == 24000
+    assert body["duration"] == 0.1
 
 
 # ─────────────────────────────────────────────────────────────

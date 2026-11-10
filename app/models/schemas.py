@@ -75,6 +75,7 @@ class VoiceInfo(BaseModel):
 
     ``id``/``name``/``language`` are always present; the remaining fields are
     populated when the engine exposes the metadata that allows deriving them.
+    ``quality`` is ``null`` for the voices the catalogue of record does not grade.
     """
 
     id: str
@@ -86,16 +87,26 @@ class VoiceInfo(BaseModel):
         default=None, description="Engine language code accepted during synthesis (e.g. 'en-us')"
     )
     quality: str | None = Field(
-        default=None, description="Published quality grade for the voice (e.g. 'A', 'C+')"
+        default=None,
+        description="Published quality grade (e.g. 'A', 'C-'); null when the catalogue does not grade the voice",
     )
     tags: list[str] = Field(
-        default_factory=list, description="Filterable tags (gender, language, grade, ...)"
+        default_factory=list,
+        description="Filterable tags (gender, language, region, grade-*, recommended, unrated)",
     )
 
 
 class VoicesResponse(BaseModel):
     voices: list[VoiceInfo]
     total: int
+    engine: str | None = Field(default=None, description="Engine the catalogue was read from")
+    available: bool = Field(
+        default=True,
+        description=(
+            "Whether the engine that provides these voices is loaded. When false the "
+            "catalogue is the shipped-pack manifest and synthesis returns 503."
+        ),
+    )
 
 
 class EngineCapabilities(BaseModel):

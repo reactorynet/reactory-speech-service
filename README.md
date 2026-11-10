@@ -66,19 +66,34 @@ Copy `.env.example` to `.env` and customize:
 - `WS /api/tts/stream` — WebSocket streaming (sentence-by-sentence)
 
 The synthesis endpoints accept `speed` in the range **0.5–2.0** (the range kokoro-onnx
-supports); anything outside it is rejected with a 422 before inference. Responses carry
-the audio metadata under both header names — `X-Sample-Rate` / `X-Audio-Sample-Rate`,
-`X-Duration` / `X-Audio-Duration`, `X-Format` / `X-Audio-Format` — so either spelling
-works for clients.
+supports); anything outside it is rejected with a 422 before inference. The WebSocket
+endpoint clamps the same range defensively so the engine is never handed a bad value.
+
+**Both** synthesis endpoints — binary and JSON — carry the audio metadata as headers under
+both spellings, so a client can read either one:
+
+| Canonical | Alias |
+|---|---|
+| `X-Sample-Rate` | `X-Audio-Sample-Rate` |
+| `X-Duration` | `X-Audio-Duration` |
+| `X-Format` | `X-Audio-Format` |
+
+(`/api/tts/synthesize/json` also returns `duration`, `format` and `sample_rate` in the body.)
 
 ### TTS Voices and Capabilities
-- `GET /api/tts/voices` — full voice catalogue as `{"voices": [...], "total": n}`;
-  optional filters `engine`, `language`, `gender`, `tag`
+- `GET /api/tts/voices` — the full voice catalogue as
+  `{"voices": [...], "total": n, "engine": "kokoro", "available": true}`.
+  Optional filters: `engine`, `language`, `gender`, `tag`.
 - `GET /api/tts/voices/{voice_id}` — one voice descriptor; `404` with a clear message
-  when the id is not present in the voice pack
+  when the id is not present in the voice pack.
 - `GET /api/tts/capabilities` — per-engine capabilities (languages, `native_rate`,
   `native_pitch`, `native_volume`, `styles`, `supports_cloning`, `supports_streaming`,
-  `sample_rates`, `gpu_required`)
+  `sample_rates`, `gpu_required`).
+
+`available` on the voices response tells you whether the engine is actually loaded. Voice
+discovery works *before* the model is loaded (the shipped-pack manifest is used as the
+catalogue), so that a picker can populate at boot — but when `available` is `false`,
+synthesis returns `503`. `GET /api/tts/capabilities` reports the same flag per engine.
 
 ### Pronunciation Lexicon Management
 - `GET /api/tts/lexicon` — List all active pronunciation dictionary entries (built-in + custom)
@@ -163,16 +178,54 @@ through a hard-coded list. The shipped pack contains **54 voices across 9 langua
 | Japanese | `ja` | 5 | `jf_alpha`, `jm_kumo` |
 | Mandarin Chinese | `zh` | 8 | `zf_xiaoxiao`, `zm_yunxi` |
 | Spanish | `es` | 3 | `ef_dora`, `em_alex` |
-| French | `fr-FR` | 1 | `ff_siwis` |
+| French | `fr-FR` | 1 | `ff_siwis` (B-) |
 | Hindi | `hi` | 4 | `hf_alpha`, `hm_psi` |
 | Italian | `it` | 2 | `if_sara`, `im_nicola` |
 | Brazilian Portuguese | `pt-BR` | 3 | `pf_dora`, `pm_santa` |
 
-Each descriptor reports `id`, `name`, `language`, `locale` (the code handed to the
-engine), `gender`, `engine`, `quality` (published Kokoro-82M grade) and `tags`
-(`female`/`male`, language, regional variant, `grade-a`…`grade-f`, `recommended`).
-The full per-voice table is in
-[`docs/voices/kokoro-voice-catalogue.md`](docs/voices/kokoro-voice-catalogue.md).
+### Descriptor fields
+
+| Field | Meaning |
+|---|---|
+| `id` | Voice id as it appears in the pack (e.g. `af_heart`) |
+| `name` | Display name derived from the id (e.g. `Heart`) |
+| `language` | Canonical language tag (e.g. `en-US`) |
+| `locale` | Code handed to the engine for phonemization (e.g. `en-us`; `cmn` for Chinese) |
+| `gender` | `female` or `male` |
+| `engine` | Engine id (`kokoro`) |
+| `quality` | Published quality grade, or `null` when the catalogue does not grade the voice |
+| `tags` | Filterable tags, see below |
+
+### Quality grades and tags
+
+Grades reproduce the Kokoro-82M estimates from the catalogue of record: **47 of the 54
+voices are graded**, and the remaining 7 (`bm_lewis`, `ef_dora`, `em_alex`, `em_santa`,
+`pf_dora`, `pm_alex`, `pm_santa`) are reported as `quality: null` rather than being given
+an invented grade.
+
+| Grade | Voices |
+|---|---|
+| A | `af_heart` |
+| A- | `af_bella` |
+| B- | `af_nicole`, `bf_emma`, `ff_siwis` |
+| C+ | `af_aoede`, `af_kore`, `af_sarah`, `am_fenrir`, `am_michael`, `am_puck`, `jf_alpha` |
+| C | 22 voices, including `af_alloy`, `bf_lily`, `bm_george`, `hf_*`, `hm_*`, `zf_*`, `zm_*` |
+| C- | `af_sky`, `jf_nezumi`, `jm_kumo` |
+| D | 8 voices, including `af_jessica`, `am_echo`, `bf_alice`, `bm_daniel` |
+| D- | `am_santa` |
+| F+ | `am_adam` |
+
+Tags are lower-case and filterable via `?tag=`:
+
+- `female` / `male`
+- `english` / `japanese` / `chinese` / `spanish` / `french` / `hindi` / `italian` / `portuguese`
+- `american` / `british` / `mandarin` (regional variants)
+- one grade tag per graded voice, with the sign spelled out: `grade-a`, `grade-a-minus`,
+  `grade-b-minus`, `grade-c-plus`, `grade-c`, `grade-c-minus`, `grade-d`, `grade-d-minus`,
+  `grade-f-plus`
+- `recommended` — the catalogue's customer-facing guidance ("treat C+ and above as
+  candidates for customer-facing defaults"), so 12 voices
+- `unrated` — the 7 voices with no published grade
 
 ```bash
 # All 54 voices
@@ -182,6 +235,7 @@ curl http://localhost:8765/api/tts/voices
 curl 'http://localhost:8765/api/tts/voices?language=ja'
 curl 'http://localhost:8765/api/tts/voices?language=en-us&gender=female'
 curl 'http://localhost:8765/api/tts/voices?tag=recommended'
+curl 'http://localhost:8765/api/tts/voices?tag=unrated'
 
 # One voice (404 when unknown)
 curl http://localhost:8765/api/tts/voices/af_heart
@@ -190,8 +244,10 @@ curl http://localhost:8765/api/tts/voices/af_heart
 curl http://localhost:8765/api/tts/capabilities
 ```
 
-Voice discovery works before the model is loaded (the shipped-pack manifest is used as
-the catalogue); synthesis still requires the engine.
+The per-voice catalogue of record — language families, the full grade table, blending
+recipes and licensing notes — lives in `docs/voices/kokoro-voice-catalogue.md`. That
+document is introduced by the speech-direction branch (PR #6); until that merges, the table
+above and `GET /api/tts/voices` are the available references.
 
 ## Architecture
 

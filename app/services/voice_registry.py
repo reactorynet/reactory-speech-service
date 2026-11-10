@@ -20,10 +20,13 @@ lower-case form of the language tag, except for Mandarin Chinese: espeak-ng (the
 G2P backend used by kokoro-onnx) only accepts the ``cmn`` alias for it and fails
 on ``zh``.
 
-Quality grades are the published Kokoro-82M voice grades (documented in
-``docs/voices/kokoro-voice-catalogue.md``) and are kept in a static table keyed
-by voice id.  A voice that is not graded there inherits :data:`DEFAULT_QUALITY`;
-it is still exposed, never dropped.
+Quality grades reproduce ``docs/voices/kokoro-voice-catalogue.md`` (the catalogue
+of record) exactly, and only for the voices that document actually grades: it
+publishes grades for 47 of the 54 voices.  The remaining 7 are listed in
+:data:`UNGRADED_VOICE_IDS` and report ``quality: null`` — they are surfaced as
+*unrated* rather than being given an invented grade.  Do not add an entry to
+:data:`QUALITY_GRADES` for a voice the document does not grade; update the
+document first, then this table.
 """
 
 import logging
@@ -50,8 +53,28 @@ KOKORO_STYLES = ["neutral"]
 #: Fallback language code for ids that do not follow the Kokoro id scheme.
 DEFAULT_LOCALE = "en-us"
 
-#: Grade assigned to a voice that has no published quality grade.
-DEFAULT_QUALITY = "C"
+#: Tag applied to a voice whose quality grade the catalogue does not publish.
+UNRATED_TAG = "unrated"
+
+#: Grade slugs used for the ``grade-*`` tags, so ``A`` and ``A-`` stay distinct.
+GRADE_TAGS: dict[str, str] = {
+    "A": "grade-a",
+    "A-": "grade-a-minus",
+    "B-": "grade-b-minus",
+    "C+": "grade-c-plus",
+    "C": "grade-c",
+    "C-": "grade-c-minus",
+    "D": "grade-d",
+    "D-": "grade-d-minus",
+    "F+": "grade-f-plus",
+}
+
+#: Grades the catalogue calls "candidates for customer-facing defaults"
+#: (docs/voices/kokoro-voice-catalogue.md: "Treat C+ and above as ...").
+CUSTOMER_FACING_GRADES: frozenset[str] = frozenset({"A", "A-", "B-", "C+"})
+
+#: Tag applied to a voice graded ``C+`` or above.
+RECOMMENDED_TAG = "recommended"
 
 
 @dataclass(frozen=True)
@@ -87,63 +110,49 @@ LANGUAGE_FAMILIES: dict[str, LanguageFamily] = {
 #: Kokoro id second character → gender.
 GENDERS: dict[str, str] = {"f": "female", "m": "male"}
 
-#: Published Kokoro-82M quality grades, keyed by voice id.
+#: Published quality grades, keyed by voice id.
+#:
+#: Transcribed from the "Quality grades" table in
+#: ``docs/voices/kokoro-voice-catalogue.md``; 47 voices.  The seven voices the
+#: document leaves ungraded are deliberately absent — see
+#: :data:`UNGRADED_VOICE_IDS`.
 QUALITY_GRADES: dict[str, str] = {
     # American English
-    "af_alloy": "C",
-    "af_aoede": "C+",
-    "af_bella": "A-",
     "af_heart": "A",
-    "af_jessica": "D",
-    "af_kore": "C+",
+    "af_bella": "A-",
     "af_nicole": "B-",
-    "af_nova": "C",
-    "af_river": "D",
+    "af_aoede": "C+",
+    "af_kore": "C+",
     "af_sarah": "C+",
+    "af_alloy": "C",
+    "af_nova": "C",
     "af_sky": "C-",
-    "am_adam": "F+",
+    "af_jessica": "D",
+    "af_river": "D",
+    "am_fenrir": "C+",
+    "am_michael": "C+",
+    "am_puck": "C+",
     "am_echo": "D",
     "am_eric": "D",
-    "am_fenrir": "C+",
     "am_liam": "D",
-    "am_michael": "C+",
     "am_onyx": "D",
-    "am_puck": "C+",
     "am_santa": "D-",
+    "am_adam": "F+",
     # British English
-    "bf_alice": "D",
     "bf_emma": "B-",
     "bf_isabella": "C",
-    "bf_lily": "D",
-    "bm_daniel": "D",
+    "bf_lily": "C",
     "bm_fable": "C",
     "bm_george": "C",
-    "bm_lewis": "D",
-    # Spanish
-    "ef_dora": "C",
-    "em_alex": "C",
-    "em_santa": "C+",
-    # French
-    "ff_siwis": "C",
-    # Hindi
-    "hf_alpha": "C",
-    "hf_beta": "C",
-    "hm_omega": "C",
-    "hm_psi": "C",
-    # Italian
-    "if_sara": "C",
-    "im_nicola": "C",
+    "bf_alice": "D",
+    "bm_daniel": "D",
     # Japanese
     "jf_alpha": "C+",
     "jf_gongitsune": "C",
-    "jf_nezumi": "C",
     "jf_tebukuro": "C",
-    "jm_kumo": "C",
-    # Brazilian Portuguese
-    "pf_dora": "C",
-    "pm_alex": "C",
-    "pm_santa": "C+",
-    # Mandarin Chinese
+    "jf_nezumi": "C-",
+    "jm_kumo": "C-",
+    # Mandarin Chinese (``zf_*`` and ``zm_*`` are graded C as a block)
     "zf_xiaobei": "C",
     "zf_xiaoni": "C",
     "zf_xiaoxiao": "C",
@@ -152,18 +161,102 @@ QUALITY_GRADES: dict[str, str] = {
     "zm_yunxi": "C",
     "zm_yunxia": "C",
     "zm_yunyang": "C",
+    # French
+    "ff_siwis": "B-",
+    # Hindi
+    "hf_alpha": "C",
+    "hf_beta": "C",
+    "hm_omega": "C",
+    "hm_psi": "C",
+    # Italian
+    "if_sara": "C",
+    "im_nicola": "C",
 }
+
+#: Voices shipped in the pack that the catalogue of record does not grade.
+#:
+#: They are fully usable and fully exposed; only their ``quality`` is ``null``,
+#: because publishing a grade for them would be inventing data.
+UNGRADED_VOICE_IDS: tuple[str, ...] = (
+    "bm_lewis",
+    "ef_dora",
+    "em_alex",
+    "em_santa",
+    "pf_dora",
+    "pm_alex",
+    "pm_santa",
+)
 
 #: Voice ids shipped in the v1.0 voice pack.
 #:
-#: Used for voice discovery before the engine is loaded.  As soon as an engine is
-#: available its own ``voices`` keys take precedence — this tuple is never used to
-#: reject a voice.
-SHIPPED_VOICE_IDS: tuple[str, ...] = tuple(sorted(QUALITY_GRADES))
+#: A literal manifest, deliberately NOT derived from :data:`QUALITY_GRADES`:
+#: "which voices exist" must not depend on "which voices have a published grade".
+#: Used only for discovery before an engine is loaded; as soon as an engine is
+#: available its own ``voices`` keys take precedence, and this tuple is never used
+#: to reject a voice.
+SHIPPED_VOICE_IDS: tuple[str, ...] = (
+    "af_alloy",
+    "af_aoede",
+    "af_bella",
+    "af_heart",
+    "af_jessica",
+    "af_kore",
+    "af_nicole",
+    "af_nova",
+    "af_river",
+    "af_sarah",
+    "af_sky",
+    "am_adam",
+    "am_echo",
+    "am_eric",
+    "am_fenrir",
+    "am_liam",
+    "am_michael",
+    "am_onyx",
+    "am_puck",
+    "am_santa",
+    "bf_alice",
+    "bf_emma",
+    "bf_isabella",
+    "bf_lily",
+    "bm_daniel",
+    "bm_fable",
+    "bm_george",
+    "bm_lewis",
+    "ef_dora",
+    "em_alex",
+    "em_santa",
+    "ff_siwis",
+    "hf_alpha",
+    "hf_beta",
+    "hm_omega",
+    "hm_psi",
+    "if_sara",
+    "im_nicola",
+    "jf_alpha",
+    "jf_gongitsune",
+    "jf_nezumi",
+    "jf_tebukuro",
+    "jm_kumo",
+    "pf_dora",
+    "pm_alex",
+    "pm_santa",
+    "zf_xiaobei",
+    "zf_xiaoni",
+    "zf_xiaoxiao",
+    "zf_xiaoyi",
+    "zm_yunjian",
+    "zm_yunxi",
+    "zm_yunxia",
+    "zm_yunyang",
+)
 
 
 class VoiceDescriptor(TypedDict):
-    """Enriched description of a single voice."""
+    """Enriched description of a single voice.
+
+    ``quality`` is ``None`` when the catalogue of record does not grade the voice.
+    """
 
     id: str
     name: str
@@ -171,7 +264,7 @@ class VoiceDescriptor(TypedDict):
     locale: str
     gender: str
     engine: str
-    quality: str
+    quality: str | None
     tags: list[str]
 
 
@@ -181,14 +274,22 @@ def _display_name(voice_id: str) -> str:
     return suffix.replace("_", " ").title()
 
 
-def _build_tags(family: LanguageFamily, gender: str, quality: str) -> list[str]:
-    """Derive the filterable tag list for a voice."""
+def _build_tags(family: LanguageFamily, gender: str, quality: str | None) -> list[str]:
+    """Derive the filterable tag list for a voice.
+
+    An ungraded voice gets :data:`UNRATED_TAG` instead of a ``grade-*`` tag.
+    ``recommended`` follows the catalogue's guidance ("treat C+ and above as
+    candidates for customer-facing defaults"), so it is not limited to grade A.
+    """
     tags = [gender, family.name]
     if family.variant:
         tags.append(family.variant)
-    tags.append(f"grade-{quality[0].lower()}")
-    if quality[0].upper() == "A":
-        tags.append("recommended")
+    if quality is None:
+        tags.append(UNRATED_TAG)
+        return tags
+    tags.append(GRADE_TAGS[quality])
+    if quality in CUSTOMER_FACING_GRADES:
+        tags.append(RECOMMENDED_TAG)
     return tags
 
 
@@ -210,7 +311,7 @@ def describe_voice(voice_id: str, engine: str = KOKORO_ENGINE) -> VoiceDescripto
     if not name:
         return None
 
-    quality = QUALITY_GRADES.get(voice_id, DEFAULT_QUALITY)
+    quality = QUALITY_GRADES.get(voice_id)
     return VoiceDescriptor(
         id=voice_id,
         name=name,
@@ -248,7 +349,7 @@ def build_catalogue(
                 locale=DEFAULT_LOCALE,
                 gender="unknown",
                 engine=engine,
-                quality=DEFAULT_QUALITY,
+                quality=None,
                 tags=["unknown"],
             )
         catalogue.append(descriptor)
