@@ -1,8 +1,18 @@
-"""TTS router — REST and WebSocket endpoints for text-to-speech and lexicon management."""
+"""TTS router — REST and WebSocket endpoints for text-to-speech and lexicon management.
+
+The HTTP layer owns transport, validation and backwards compatibility only.  It
+resolves the caller's direction into the provider-neutral contract, asks the
+orchestrator what the engine will actually honour, and returns that honestly in
+``direction_applied`` / ``direction_ignored`` (headers on the WAV response, body
+fields on the JSON response).
+"""
+
+from __future__ import annotations
 
 import base64
 import json
 import logging
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -13,7 +23,10 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import ValidationError
 
+from app.core.contracts import Direction, DirectionPlan
+from app.core.direction import resolve_direction
 from app.models.schemas import (
     CapabilitiesResponse,
     EngineCapabilities,
@@ -57,6 +70,91 @@ def _audio_headers(duration: float) -> dict[str, str]:
     }
 
 
+def _ascii_header_value(value: str) -> str:
+    """Header values must be latin-1; keep warnings ASCII so they always send."""
+    return str(value).encode("ascii", "replace").decode("ascii")
+
+
+def _direction_headers(plan: DirectionPlan) -> dict[str, str]:
+    """Emit the applied/ignored contract on an audio response."""
+    headers = {
+        "X-Engine": _ascii_header_value(plan.engine),
+        "X-Direction-Applied": _ascii_header_value(
+            json.dumps(plan.applied, ensure_ascii=True, separators=(",", ":"))
+        ),
+        "X-Direction-Ignored": _ascii_header_value(",".join(plan.ignored)),
+    }
+    if plan.warnings:
+        headers["X-Direction-Warnings"] = _ascii_header_value(" | ".join(plan.warnings))
+    return headers
+
+
+def _plan_for(
+    tts_service: Any, body: TTSRequest
+) -> tuple[Direction, DirectionPlan, list[str]]:
+    """Merge the legacy ``speed`` alias and ask the orchestrator to lower it.
+
+    Returns the effective direction, the lowering plan and any alias notes (the
+    ``speed`` vs ``direction.prosody.rate`` precedence message).
+    """
+    direction, alias_warnings = resolve_direction(body.speed, body.direction)
+    plan = tts_service.plan_direction(
+        voice=body.voice,
+        engine=body.engine,
+        direction=direction,
+    )
+    if alias_warnings:
+        plan = plan.model_copy(update={"warnings": [*alias_warnings, *plan.warnings]})
+    return direction, plan, alias_warnings
+
+
+def _synthesis_kwargs(body: TTSRequest) -> dict[str, Any]:
+    """Legacy optional arguments, forwarded only when the caller supplied them."""
+    kwargs: dict[str, Any] = {}
+    if body.is_phonemes:
+        kwargs["is_phonemes"] = True
+    if body.phonetic_preprocess is not None:
+        kwargs["phonetic_preprocess"] = body.phonetic_preprocess
+    if body.custom_lexicon is not None:
+        kwargs["custom_lexicon"] = body.custom_lexicon
+    return kwargs
+
+
+def _render(tts_service: Any, body: TTSRequest) -> tuple[bytes, float, DirectionPlan]:
+    """Render audio plus the direction contract.
+
+    A request that sends neither ``direction`` nor ``engine`` takes the unchanged
+    legacy path — same call, same arguments, same bytes.  Anything new goes
+    through the orchestrator's detailed entry point.
+    """
+    direction, plan, alias_warnings = _plan_for(tts_service, body)
+    kwargs = _synthesis_kwargs(body)
+
+    if body.direction is None and body.engine is None:
+        wav_bytes, duration = tts_service.synthesize(
+            body.text,
+            voice=body.voice,
+            speed=body.speed,
+            **kwargs,
+        )
+        return wav_bytes, duration, plan
+
+    result = tts_service.synthesize_detailed(
+        body.text,
+        voice=body.voice,
+        direction=direction,
+        engine=body.engine,
+        **kwargs,
+    )
+    applied_plan = DirectionPlan(
+        engine=result.engine,
+        applied=result.applied,
+        ignored=result.ignored,
+        warnings=[*alias_warnings, *result.warnings],
+    )
+    return result.audio, result.duration, applied_plan
+
+
 # ─────────────────────────────────────────────────────────────
 # TTS Synthesis Endpoints
 # ─────────────────────────────────────────────────────────────
@@ -76,24 +174,11 @@ async def synthesize(request: Request, body: TTSRequest) -> Response:
         raise HTTPException(status_code=503, detail="TTS service not available")
 
     try:
-        kwargs = {}
-        if body.is_phonemes:
-            kwargs["is_phonemes"] = True
-        if body.phonetic_preprocess is not None:
-            kwargs["phonetic_preprocess"] = body.phonetic_preprocess
-        if body.custom_lexicon is not None:
-            kwargs["custom_lexicon"] = body.custom_lexicon
-
-        wav_bytes, duration = tts_service.synthesize(
-            body.text,
-            voice=body.voice,
-            speed=body.speed,
-            **kwargs,
-        )
+        wav_bytes, duration, plan = _render(tts_service, body)
         return Response(
             content=wav_bytes,
             media_type="audio/wav",
-            headers=_audio_headers(duration),
+            headers={**_audio_headers(duration), **_direction_headers(plan)},
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -110,33 +195,25 @@ async def synthesize_json(
 
     The same audio metadata is returned in the body *and* as ``X-Sample-Rate`` /
     ``X-Audio-Sample-Rate`` (plus the duration and format aliases), so a consumer
-    can read either endpoint the same way.
+    can read either endpoint the same way.  The applied/ignored direction contract
+    is returned in the body and in the ``X-Direction-*`` headers.
     """
     tts_service = request.app.state.tts_service
     if not tts_service.is_ready:
         raise HTTPException(status_code=503, detail="TTS service not available")
 
     try:
-        kwargs = {}
-        if body.is_phonemes:
-            kwargs["is_phonemes"] = True
-        if body.phonetic_preprocess is not None:
-            kwargs["phonetic_preprocess"] = body.phonetic_preprocess
-        if body.custom_lexicon is not None:
-            kwargs["custom_lexicon"] = body.custom_lexicon
-
-        wav_bytes, duration = tts_service.synthesize(
-            body.text,
-            voice=body.voice,
-            speed=body.speed,
-            **kwargs,
-        )
-        response.headers.update(_audio_headers(duration))
+        wav_bytes, duration, plan = _render(tts_service, body)
+        response.headers.update({**_audio_headers(duration), **_direction_headers(plan)})
         return TTSResponse(
             audio_base64=base64.b64encode(wav_bytes).decode("ascii"),
             duration=round(duration, 3),
             format="wav",
             sample_rate=SAMPLE_RATE,
+            engine=plan.engine,
+            direction_applied=plan.applied,
+            direction_ignored=plan.ignored,
+            direction_warnings=plan.warnings,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -164,7 +241,7 @@ async def list_voices(
     """List the voices exposed by the loaded engine, with optional filters.
 
     ``available`` reports whether the engine is actually loaded: when it is not,
-    the catalogue is the shipped-pack manifest and synthesis will return 503.
+    the catalogue is the registry's manifest and synthesis will return 503.
     """
     tts_service = request.app.state.tts_service
     voices = filter_catalogue(
@@ -200,9 +277,11 @@ async def get_voice(voice_id: str, request: Request) -> VoiceInfo:
 
 @router.get("/capabilities", response_model=CapabilitiesResponse)
 async def capabilities(request: Request) -> CapabilitiesResponse:
-    """Report the capabilities of every TTS engine available in this deployment."""
+    """Report the capability matrix of every TTS engine in this deployment."""
     tts_service = request.app.state.tts_service
-    return CapabilitiesResponse(engines=[EngineCapabilities(**tts_service.capabilities())])
+    return CapabilitiesResponse(
+        engines=[EngineCapabilities(**row) for row in tts_service.capability_matrix()]
+    )
 
 
 @router.post(
@@ -230,7 +309,12 @@ async def phonemize_text(request: Request, body: PhonemizeRequest) -> PhonemizeR
 
 @router.websocket("/stream")
 async def tts_stream(websocket: WebSocket) -> None:
-    """WebSocket endpoint for streaming TTS."""
+    """WebSocket endpoint for streaming TTS.
+
+    Binary audio frames and the trailing ``{"done": true, ...}`` message are
+    unchanged.  An optional per-message ``direction`` is lowered before
+    synthesis, and the applied/ignored contract is added to the ``done`` frame.
+    """
     await websocket.accept()
     tts_service = websocket.app.state.tts_service
 
@@ -255,10 +339,43 @@ async def tts_stream(websocket: WebSocket) -> None:
 
             voice = msg.get("voice")
             speed = msg.get("speed")
+            engine_override = msg.get("engine")
+            direction_payload = msg.get("direction")
             is_phonemes = bool(msg.get("is_phonemes", False))
             phonetic_preprocess = msg.get("phonetic_preprocess")
             custom_lexicon = msg.get("custom_lexicon")
             total_duration = 0.0
+            effective_direction: Direction | None = None
+
+            # The direction and the engine override are validated the same way
+            # whether or not the caller supplied a direction.  An explicit engine
+            # is never silently dropped: it either routes the audio or errors.
+            if direction_payload is not None:
+                try:
+                    requested = Direction.model_validate(direction_payload)
+                except ValidationError as exc:
+                    await websocket.send_json(
+                        {"error": f"Invalid direction: {exc.errors(include_url=False)}"}
+                    )
+                    continue
+                effective_direction, notes = resolve_direction(speed, requested)
+            else:
+                notes = []
+
+            try:
+                plan = tts_service.plan_direction(
+                    voice=voice,
+                    engine=engine_override,
+                    direction=effective_direction,
+                )
+            except ValueError as exc:
+                await websocket.send_json({"error": str(exc)})
+                continue
+
+            if notes:
+                plan = plan.model_copy(update={"warnings": [*notes, *plan.warnings]})
+            if effective_direction is not None:
+                speed = plan.applied.get("rate", speed)
 
             try:
                 kwargs = {}
@@ -273,13 +390,22 @@ async def tts_stream(websocket: WebSocket) -> None:
                     text,
                     voice=voice,
                     speed=speed,
+                    engine=engine_override,
+                    direction=effective_direction,
                     **kwargs,
                 ):
                     await websocket.send_bytes(wav_chunk)
                     total_duration += duration
 
                 await websocket.send_json(
-                    {"done": True, "total_duration": round(total_duration, 3)}
+                    {
+                        "done": True,
+                        "total_duration": round(total_duration, 3),
+                        "engine": plan.engine,
+                        "direction_applied": plan.applied,
+                        "direction_ignored": plan.ignored,
+                        "direction_warnings": plan.warnings,
+                    }
                 )
             except ValueError as e:
                 await websocket.send_json({"error": str(e)})
