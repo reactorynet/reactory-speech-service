@@ -14,7 +14,7 @@ def test_synthesize_returns_wav(client, mock_tts_service):
     assert response.headers["x-audio-duration"] == "0.5"
     assert response.headers["x-audio-format"] == "wav"
     assert len(response.content) > 0
-    mock_tts_service.synthesize.assert_called_once_with(
+    mock_tts_service.synthesize_async.assert_awaited_once_with(
         "Hello world", voice=None, speed=None
     )
 
@@ -26,7 +26,7 @@ def test_synthesize_with_voice_and_speed(client, mock_tts_service):
         json={"text": "Test", "voice": "am_adam", "speed": 1.5},
     )
     assert response.status_code == 200
-    mock_tts_service.synthesize.assert_called_once_with(
+    mock_tts_service.synthesize_async.assert_awaited_once_with(
         "Test", voice="am_adam", speed=1.5
     )
 
@@ -90,7 +90,7 @@ def test_synthesize_service_not_ready(client, mock_tts_service):
 
 def test_synthesize_value_error(client, mock_tts_service):
     """Return 422 when synthesis raises ValueError (e.g., unknown voice)."""
-    mock_tts_service.synthesize.side_effect = ValueError("Unknown voice 'bad'")
+    mock_tts_service.synthesize_async.side_effect = ValueError("Unknown voice 'bad'")
     response = client.post(
         "/api/tts/synthesize",
         json={"text": "Hello"},

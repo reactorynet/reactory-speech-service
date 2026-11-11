@@ -10,6 +10,7 @@ fields on the JSON response).
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import logging
 from typing import Any
@@ -27,6 +28,7 @@ from pydantic import ValidationError
 
 from app.core.contracts import Direction, DirectionPlan
 from app.core.direction import resolve_direction
+from app.engines.base import EngineUnavailableError
 from app.models.schemas import (
     CapabilitiesResponse,
     EngineCapabilities,
@@ -42,7 +44,8 @@ from app.models.schemas import (
     VoicesResponse,
 )
 from app.services.phonetic_converter import phonetic_converter
-from app.services.tts_service import ENGINE_ID, SAMPLE_RATE
+from app.services.inference import InferenceExecutor
+from app.services.tts_service import ENGINE_ID, SAMPLE_RATE, SynthesisOutcome
 from app.services.voice_registry import filter_catalogue
 
 logger = logging.getLogger(__name__)
@@ -73,6 +76,32 @@ def _audio_headers(duration: float) -> dict[str, str]:
 def _ascii_header_value(value: str) -> str:
     """Header values must be latin-1; keep warnings ASCII so they always send."""
     return str(value).encode("ascii", "replace").decode("ascii")
+
+
+def _can_serve(tts_service: Any) -> bool:
+    """Whether a request may be admitted to the TTS service.
+
+    ``can_serve`` means "an engine is registered, so it can be loaded"; it is
+    deliberately weaker than ``is_ready`` ("a model is resident"), because a
+    lazily loaded or idle-unloaded engine still serves the request.  A service
+    double without the property falls back to ``is_ready`` so a 503 still means
+    "TTS unavailable" in unit tests and in older deployments.
+    """
+    value = getattr(tts_service, "can_serve", None)
+    if isinstance(value, bool):
+        return value
+    return bool(getattr(tts_service, "is_ready", False))
+
+
+def _cache_headers(outcome: SynthesisOutcome) -> dict[str, str]:
+    """Report cache behaviour on the response.
+
+    ``X-Cache`` is ``hit`` or ``miss``; ``X-Cache-Tier`` explains where a hit
+    came from (``lru``, ``disk``) or ``none`` when inference ran.  A request that
+    disables the cache reports ``miss`` / ``none`` rather than inventing a third
+    state, so clients can treat the header as a boolean.
+    """
+    return {"X-Cache": outcome.cache, "X-Cache-Tier": outcome.cache_tier}
 
 
 def _direction_headers(plan: DirectionPlan) -> dict[str, str]:
@@ -120,39 +149,50 @@ def _synthesis_kwargs(body: TTSRequest) -> dict[str, Any]:
     return kwargs
 
 
-def _render(tts_service: Any, body: TTSRequest) -> tuple[bytes, float, DirectionPlan]:
-    """Render audio plus the direction contract.
+async def _render(tts_service: Any, body: TTSRequest) -> SynthesisOutcome:
+    """Render audio plus the direction contract, off the event loop.
 
     A request that sends neither ``direction`` nor ``engine`` takes the unchanged
-    legacy path — same call, same arguments, same bytes.  Anything new goes
-    through the orchestrator's detailed entry point.
+    legacy argument shape — same call, same keyword arguments, same bytes — but
+    the call is now awaited so inference runs in the engine's thread pool rather
+    than in the request handler.
     """
-    direction, plan, alias_warnings = _plan_for(tts_service, body)
+    _direction, plan, alias_warnings = _plan_for(tts_service, body)
     kwargs = _synthesis_kwargs(body)
 
-    if body.direction is None and body.engine is None:
-        wav_bytes, duration = tts_service.synthesize(
-            body.text,
-            voice=body.voice,
-            speed=body.speed,
-            **kwargs,
-        )
-        return wav_bytes, duration, plan
+    # Only forward the additive arguments the caller actually sent, so a legacy
+    # request stays visibly legacy (and behaves exactly as it did before).
+    forwarded: dict[str, Any] = {}
+    if body.direction is not None:
+        forwarded["direction"] = body.direction
+    if body.engine is not None:
+        forwarded["engine"] = body.engine
+    if not body.cache:
+        forwarded["cache"] = False
 
-    result = tts_service.synthesize_detailed(
+    outcome = await tts_service.synthesize_async(
         body.text,
         voice=body.voice,
-        direction=direction,
-        engine=body.engine,
+        speed=body.speed,
+        **forwarded,
         **kwargs,
     )
+
     applied_plan = DirectionPlan(
-        engine=result.engine,
-        applied=result.applied,
-        ignored=result.ignored,
-        warnings=[*alias_warnings, *result.warnings],
+        engine=outcome.plan.engine or plan.engine,
+        applied=outcome.plan.applied,
+        ignored=outcome.plan.ignored,
+        warnings=[*alias_warnings, *outcome.plan.warnings],
     )
-    return result.audio, result.duration, applied_plan
+    return SynthesisOutcome(
+        audio=outcome.audio,
+        duration=outcome.duration,
+        plan=applied_plan,
+        cache=outcome.cache,
+        cache_tier=outcome.cache_tier,
+        cache_key=outcome.cache_key,
+        engine=outcome.engine,
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -170,18 +210,25 @@ def _render(tts_service: Any, body: TTSRequest) -> tuple[bytes, float, Direction
 async def synthesize(request: Request, body: TTSRequest) -> Response:
     """Synthesize text or phonemes to speech, returning WAV audio."""
     tts_service = request.app.state.tts_service
-    if not tts_service.is_ready:
+    if not _can_serve(tts_service):
         raise HTTPException(status_code=503, detail="TTS service not available")
 
     try:
-        wav_bytes, duration, plan = _render(tts_service, body)
+        outcome = await _render(tts_service, body)
         return Response(
-            content=wav_bytes,
+            content=outcome.audio,
             media_type="audio/wav",
-            headers={**_audio_headers(duration), **_direction_headers(plan)},
+            headers={
+                **_audio_headers(outcome.duration),
+                **_direction_headers(outcome.plan),
+                **_cache_headers(outcome),
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except EngineUnavailableError as e:
+        logger.warning("TTS engine unavailable: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception:
         logger.exception("TTS synthesis failed")
         raise HTTPException(status_code=500, detail="Synthesis failed")
@@ -199,24 +246,35 @@ async def synthesize_json(
     is returned in the body and in the ``X-Direction-*`` headers.
     """
     tts_service = request.app.state.tts_service
-    if not tts_service.is_ready:
+    if not _can_serve(tts_service):
         raise HTTPException(status_code=503, detail="TTS service not available")
 
     try:
-        wav_bytes, duration, plan = _render(tts_service, body)
-        response.headers.update({**_audio_headers(duration), **_direction_headers(plan)})
+        outcome = await _render(tts_service, body)
+        response.headers.update(
+            {
+                **_audio_headers(outcome.duration),
+                **_direction_headers(outcome.plan),
+                **_cache_headers(outcome),
+            }
+        )
         return TTSResponse(
-            audio_base64=base64.b64encode(wav_bytes).decode("ascii"),
-            duration=round(duration, 3),
+            audio_base64=base64.b64encode(outcome.audio).decode("ascii"),
+            duration=round(outcome.duration, 3),
             format="wav",
             sample_rate=SAMPLE_RATE,
-            engine=plan.engine,
-            direction_applied=plan.applied,
-            direction_ignored=plan.ignored,
-            direction_warnings=plan.warnings,
+            engine=outcome.plan.engine,
+            direction_applied=outcome.plan.applied,
+            direction_ignored=outcome.plan.ignored,
+            direction_warnings=outcome.plan.warnings,
+            cache=outcome.cache,
+            cache_tier=outcome.cache_tier,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except EngineUnavailableError as e:
+        logger.warning("TTS engine unavailable: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception:
         logger.exception("TTS synthesis failed")
         raise HTTPException(status_code=500, detail="Synthesis failed")
@@ -293,20 +351,30 @@ async def capabilities(request: Request) -> CapabilitiesResponse:
     },
 )
 async def phonemize_text(request: Request, body: PhonemizeRequest) -> PhonemizeResponse:
-    """Convert text into phonetic (IPA) writing using normalization and phonetic conversion."""
+    """Convert text into phonetic (IPA) writing using normalization and phonetic conversion.
+
+    Grapheme-to-phoneme conversion is CPU work over a process-global espeak-ng
+    backend, so it is dispatched to the inference pool instead of running on the
+    event loop.
+    """
     tts_service = request.app.state.tts_service
+    call = functools.partial(
+        tts_service.phonemize,
+        body.text,
+        language=body.language or "en-us",
+        custom_lexicon=body.custom_lexicon,
+    )
     try:
-        result = tts_service.phonemize(
-            body.text,
-            language=body.language or "en-us",
-            custom_lexicon=body.custom_lexicon,
-        )
+        executor = getattr(tts_service, "executor", None)
+        if isinstance(executor, InferenceExecutor):
+            result = await executor.run(call)
+        else:
+            # A service double (or an older deployment) has no inference pool.
+            result = call()
         return PhonemizeResponse(**result)
     except Exception as e:
         logger.exception("Phonemization failed")
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.websocket("/stream")
 async def tts_stream(websocket: WebSocket) -> None:
     """WebSocket endpoint for streaming TTS.
@@ -318,7 +386,7 @@ async def tts_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     tts_service = websocket.app.state.tts_service
 
-    if not tts_service.is_ready:
+    if not _can_serve(tts_service):
         await websocket.send_json({"error": "TTS service not available"})
         await websocket.close(code=1011)
         return
@@ -386,7 +454,7 @@ async def tts_stream(websocket: WebSocket) -> None:
                 if custom_lexicon is not None:
                     kwargs["custom_lexicon"] = custom_lexicon
 
-                for wav_chunk, duration in tts_service.synthesize_streaming(
+                async for wav_chunk, duration in tts_service.synthesize_streaming_async(
                     text,
                     voice=voice,
                     speed=speed,

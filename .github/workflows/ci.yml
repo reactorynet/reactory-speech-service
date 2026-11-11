@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest + ruff (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check app/ tests/
+
+      - name: Test
+        run: pytest -v -m "not slow"
+
+  image-size:
+    name: speech-core image size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The ceiling is documented in docs/architecture/speech-platform.md and
+      # enforced by the script; the step fails the build when it is exceeded.
+      - name: Build the speech-core image
+        run: docker build -t reactory-speech-service:speech-core .
+
+      - name: Assert the documented edge budget
+        run: ./scripts/check_image_size.sh --image reactory-speech-service:speech-core

@@ -23,10 +23,11 @@ stt_service = STTService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: load models. Shutdown: cleanup."""
+    """Startup: load models and the engine reaper. Shutdown: cleanup."""
     logger.info("Starting Reactory Speech Service on :%d", settings.speech_service_port)
     await tts_service.initialize()
     await stt_service.initialize()
+    await tts_service.engine_manager.start_reaper()
     logger.info(
         "Services ready — TTS: %s, STT: %s",
         tts_service.is_ready,
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     )
     yield
     logger.info("Shutting down Reactory Speech Service.")
+    await tts_service.shutdown()
 
 
 app = FastAPI(

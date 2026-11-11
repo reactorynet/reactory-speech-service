@@ -55,13 +55,29 @@ Copy `.env.example` to `.env` and customize:
 | `KOKORO_DEFAULT_SPEED` | `1.0` | Default speech speed |
 | `WHISPER_MODEL_SIZE` | `base` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_DEVICE` | `auto` | Device: `auto`, `cpu`, `cuda` |
-| `PHONETIC_PROCESSING_ENABLED` | `False` | Enable phonetic text processing for improved pronunciation |
+| `PHONETIC_PROCESSING_ENABLED` | `True` | Enable phonetic text processing (phonemise before synthesis) |
+| `SPEECH_THREAD_POOL_SIZE` | `4` | Bounded worker threads for inference; the event loop never runs a model |
+| `SPEECH_ENGINE_MAX_CONCURRENCY` | `{"kokoro": 2, "default": 1}` | Per-engine concurrency limit as a JSON map |
+| `SPEECH_MAX_LOADED_ENGINES` | `2` | Engines resident at once; further engines load lazily on first use |
+| `SPEECH_ENGINE_IDLE_TIMEOUT_SECONDS` | `300` | Unload an engine after this long without work (one engine always stays resident) |
+| `SPEECH_ENGINE_REAPER_INTERVAL_SECONDS` | `30` | How often the idle reaper runs |
+| `SPEECH_CACHE_ENABLED` | `true` | Enable the two-tier synthesis cache |
+| `SPEECH_CACHE_DIR` | `.cache/tts` | Disk tier location (local to the node; no Redis) |
+| `SPEECH_CACHE_TTL_SECONDS` | `86400` | Entry lifetime, enforced on **both** the in-process LRU and the disk tier |
+| `SPEECH_CACHE_LRU_ENTRIES` | `256` | In-process LRU entry cap |
+| `SPEECH_CACHE_LRU_MAX_BYTES` | `16777216` | In-process LRU byte cap (16 MiB) |
+| `SPEECH_CACHE_LRU_MAX_ENTRY_BYTES` | `524288` | Entries larger than this go to disk only |
+| `SPEECH_CACHE_DISK_MAX_BYTES` | `536870912` | Disk tier byte cap (512 MiB) |
 
 ## API
 
 ### Health
-- `GET /health` — Service status and model availability
-- `GET /ready` — Readiness probe (200 only when models loaded)
+- `GET /health` — Service status, per-engine readiness and queue depth, plus cache counters
+- `GET /ready` — Readiness probe (200 only when models loaded) with the same per-engine detail
+
+The legacy `tts` / `stt` booleans and the `ready` key are unchanged. `engines.<id>` reports
+`ready`, `loaded`, `lifecycle`, `queue_depth`, `in_flight`, `max_concurrency` and
+`peak_concurrency`; the top-level `queue_depth` is the sum across engines.
 
 ### TTS (Text-to-Speech)
 - `POST /api/tts/synthesize` — Returns WAV audio bytes
@@ -83,6 +99,18 @@ both spellings, so a client can read either one:
 | `X-Format` | `X-Audio-Format` |
 
 (`/api/tts/synthesize/json` also returns `duration`, `format` and `sample_rate` in the body.)
+
+Both endpoints also return `X-Cache: hit|miss` and `X-Cache-Tier: lru|disk|none`. A repeated
+identical request is served from the cache, is measurably faster and returns byte-identical
+audio. Send `"cache": false` in the body to force a fresh render for that request;
+`SPEECH_CACHE_ENABLED=false` disables the cache for the deployment.
+
+Inference always runs on a bounded worker pool under a per-engine concurrency limit, so a long
+synthesis never blocks `/health` or another request. That holds on every render path, including
+`"phonetic_preprocess": false`: grapheme-to-phoneme conversion is serialised (espeak-ng is not
+thread-safe) but the lock is released before the model runs, so it never caps concurrency. See
+[`docs/architecture/speech-platform.md`](docs/architecture/speech-platform.md) for the limits,
+the cache key and the engine lifecycle.
 
 ### TTS Voices and Capabilities
 - `GET /api/tts/voices` — the full voice catalogue as

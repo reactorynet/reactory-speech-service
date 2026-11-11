@@ -38,6 +38,13 @@ class TTSRequest(BaseModel):
     is_phonemes: bool = Field(default=False, description="Whether text is already phonetic (IPA) writing")
     phonetic_preprocess: bool | None = Field(default=None, description="Explicitly enable/disable phonetic preprocessing")
     custom_lexicon: dict[str, str] | None = Field(default=None, description="Per-request pronunciation overrides (word -> respelling or /ipa/)")
+    cache: bool = Field(
+        default=True,
+        description=(
+            "Whether this request may be served from the synthesis cache. Set false to force "
+            "a fresh render; the service-wide switch is SPEECH_CACHE_ENABLED."
+        ),
+    )
 
 
 class PhonemizeRequest(BaseModel):
@@ -88,6 +95,14 @@ class TTSResponse(BaseModel):
     direction_warnings: list[str] = Field(
         default_factory=list,
         description="Human-readable explanation for each ignored control",
+    )
+    cache: str = Field(
+        default="miss",
+        description="'hit' when the audio came from the synthesis cache, otherwise 'miss'",
+    )
+    cache_tier: str = Field(
+        default="none",
+        description="Which cache tier served the audio: 'lru', 'disk' or 'none'",
     )
 
 
@@ -180,11 +195,53 @@ class CapabilitiesResponse(BaseModel):
     engines: list[EngineCapabilities]
 
 
+class EngineHealth(BaseModel):
+    """Readiness and queue depth for a single TTS engine."""
+
+    id: str
+    ready: bool = False
+    loaded: bool = False
+    lifecycle: str = Field(
+        default="unknown",
+        description="'ready', 'loading' or 'unloaded'",
+    )
+    queue_depth: int = Field(
+        default=0,
+        description="Syntheses waiting for a concurrency slot on this engine",
+    )
+    in_flight: int = Field(default=0, description="Syntheses currently rendering")
+    max_concurrency: int = Field(default=1, description="Configured per-engine concurrency limit")
+    peak_concurrency: int = Field(default=0, description="Highest observed concurrency")
+    idle_seconds: float | None = Field(
+        default=None, description="Seconds since the engine last served a request"
+    )
+    gpu_required: bool = False
+    max_chars: int | None = None
+    voices: int | None = None
+
+
 class HealthResponse(BaseModel):
+    """Health payload.
+
+    ``tts`` and ``stt`` are unchanged for backwards compatibility.  ``engines``,
+    ``queue_depth`` and ``cache`` are additive: old clients keep reading the
+    booleans they already depend on.
+    """
+
     status: str
     tts: bool
     stt: bool
     version: str = "1.0.0"
+    engines: dict[str, EngineHealth] = Field(
+        default_factory=dict,
+        description="Per-engine readiness, lifecycle and queue depth",
+    )
+    queue_depth: int = Field(
+        default=0, description="Total syntheses queued across all TTS engines"
+    )
+    cache: dict[str, Any] | None = Field(
+        default=None, description="Synthesis cache configuration and counters"
+    )
 
 
 class ErrorResponse(BaseModel):

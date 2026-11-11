@@ -36,3 +36,6 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Synthesis cache (in-process LRU is not persisted; the disk tier is local)
+.cache/

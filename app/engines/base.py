@@ -38,6 +38,15 @@ class EngineUnavailableError(TTSEngineError, RuntimeError):
     """
 
 
+class EngineCapacityError(EngineUnavailableError):
+    """``max_loaded_engines`` is reached and no loaded engine can be evicted.
+
+    Subclasses :class:`EngineUnavailableError` so the router keeps its fallback
+    behaviour: another engine may still serve the request.  It is deliberately
+    distinct so the reason is visible in logs and in tests.
+    """
+
+
 class UnknownVoiceError(ValueError):
     """The requested voice is not exposed by the resolved engine.
 
