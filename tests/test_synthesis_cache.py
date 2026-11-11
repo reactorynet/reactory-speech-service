@@ -12,6 +12,8 @@ The acceptance criteria this file covers:
 
 from __future__ import annotations
 
+import sys
+
 import asyncio
 import json
 
@@ -520,7 +522,7 @@ def test_the_fingerprint_tracks_the_application_version(monkeypatch):
     ``SPEECH_CACHE_DIR`` can be a persisted volume, so without this a release
     would keep serving audio rendered by the previous code for the whole TTL.
     """
-    import app.services.synthesis_cache as cache_module
+    cache_module = sys.modules["app.services.synthesis_cache"]
 
     before = renderer_fingerprint()
     monkeypatch.setattr(cache_module, "_APP_VERSION", "99.0.0")
@@ -564,7 +566,7 @@ def test_the_fingerprint_costs_only_file_metadata():
     would be unacceptable.  Inspecting the code object (not the docstring) keeps
     this honest if the implementation later reaches for file contents.
     """
-    import app.services.synthesis_cache as cache_module
+    cache_module = sys.modules["app.services.synthesis_cache"]
 
     names = cache_module.renderer_fingerprint.__code__.co_names
     for forbidden in ("read_bytes", "read_text", "loads", "open"):

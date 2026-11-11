@@ -361,7 +361,7 @@ def test_kokoro_does_not_hold_the_g2p_lock_while_rendering_when_preprocessing_is
                 phonetic_preprocess=False,
                 custom_lexicon=None,
             )
-        except BaseException as exc:  # pragma: no cover - surfaced below
+        except Exception as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
 
     threads = [threading.Thread(target=render, args=(index,)) for index in range(2)]
@@ -458,7 +458,7 @@ def test_kokoro_does_not_hold_the_g2p_lock_while_rendering_phonemes():
     def render() -> None:
         try:
             engine.synthesize(request)
-        except BaseException as exc:  # pragma: no cover - surfaced below
+        except Exception as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
 
     threads = [threading.Thread(target=render) for _ in range(2)]

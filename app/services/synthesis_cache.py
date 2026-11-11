@@ -587,6 +587,8 @@ class SynthesisCache:
             try:
                 os.unlink(tmp_name)
             except OSError:
+                # Best effort: we are already unwinding, and a missing or
+                # locked temp file must not mask the original exception.
                 pass
             raise
 
@@ -596,6 +598,8 @@ class SynthesisCache:
             try:
                 path.unlink()
             except OSError:
+                # Best effort: eviction is advisory, and a file another process
+                # has already removed must not abort the whole sweep.
                 pass
 
     def _disk_size(self) -> tuple[int, list[tuple[float, Path]]]:

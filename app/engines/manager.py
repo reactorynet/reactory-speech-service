@@ -402,6 +402,8 @@ class EngineManager:
         try:
             await reaper
         except asyncio.CancelledError:
+            # Expected: we just cancelled the reaper ourselves. Cancellation is
+            # control flow here, not a failure, so it is deliberately swallowed.
             pass
         except Exception:  # pragma: no cover - defensive
             logger.exception("Idle engine reaper stopped unexpectedly")

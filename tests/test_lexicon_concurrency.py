@@ -18,6 +18,8 @@ observable half-applied or half-written.
 
 from __future__ import annotations
 
+import sys
+
 import json
 import os
 import threading
@@ -73,7 +75,7 @@ def test_renders_never_raise_while_the_lexicon_is_mutated(converter):
                     "Reactory Kubernetes API 5km and term1 term2.",
                 )
                 converter.convert_to_phonetic("Reactory uses term3 daily.")
-            except BaseException as exc:  # noqa: BLE001 - the point of the test
+            except Exception as exc:  # noqa: BLE001 - the point of the test
                 errors.append(f"{type(exc).__name__}: {exc}")
                 return
 
@@ -377,7 +379,7 @@ def test_a_mutation_during_iteration_does_not_break_a_render(converter, monkeypa
 
     The statistical test above depends on timing; this one does not.
     """
-    import app.services.phonetic_converter as pc_module
+    pc_module = sys.modules["app.services.phonetic_converter"]
 
     # Strip the built-in passes so the only re.sub calls are the inline-bracket
     # pass (1) and then one per custom entry: call #2 is inside the lexicon loop.
@@ -410,7 +412,7 @@ def test_a_mutation_during_iteration_does_not_break_a_render(converter, monkeypa
     def reader() -> None:
         try:
             converter.normalize_text("Reactory uses term5 and term6.")
-        except BaseException as exc:  # noqa: BLE001 - the point of the test
+        except Exception as exc:  # noqa: BLE001 - the point of the test
             errors.append(f"{type(exc).__name__}: {exc}")
 
     thread = threading.Thread(target=reader, daemon=True)

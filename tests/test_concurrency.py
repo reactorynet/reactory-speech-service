@@ -237,7 +237,7 @@ async def test_the_event_loop_keeps_ticking_during_a_synthesis(tmp_path):
         await service.synthesize_async("One long sentence.", cache=False)
     finally:
         stop.set()
-        await ticker
+        _ = await ticker
 
     gaps = [later - earlier for earlier, later in zip(ticks, ticks[1:], strict=False)]
     assert len(ticks) >= 10, f"only {len(ticks)} heartbeats during a 0.4s render"
@@ -543,7 +543,7 @@ async def test_health_answers_during_a_multi_second_synthesis(tmp_path):
         held = time.perf_counter() - started
     finally:
         gate.set()
-        await task
+        _ = await task
 
     assert held >= SEVERAL_SECONDS - 0.1, f"the render was only held for {held:.2f}s"
     assert len(latencies) >= 8, f"only {len(latencies)} probes in {held:.2f}s"

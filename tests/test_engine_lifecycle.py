@@ -158,7 +158,7 @@ async def test_max_loaded_engines_fails_rather_than_evicting_a_busy_engine():
         await manager.ensure_loaded("newcomer")
 
     gate.set()
-    await task
+    _ = await task
     assert newcomer.loads == 0
 
 
@@ -455,7 +455,7 @@ async def test_a_failed_eviction_returns_promptly_instead_of_spinning():
     finally:
         beat.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await beat
+            _ = await beat
     elapsed = time.monotonic() - started
 
     assert baseline >= 2, "the heartbeat did not run before the eviction attempt"

@@ -258,6 +258,8 @@ class PhoneticConverter:
             try:
                 os.unlink(temp_name)
             except OSError:
+                # Best effort: we are already unwinding, and a missing or
+                # locked temp file must not mask the original exception.
                 pass
             raise
 

@@ -59,6 +59,14 @@ class InferenceExecutor:
                     max_workers=self._max_workers,
                     thread_name_prefix=self._name,
                 )
+                # Logged deliberately: "did inference actually move off the event
+                # loop" is the question this module exists to answer, and that
+                # answer is only auditable if the pool's shape is on the record.
+                logger.info(
+                    "Inference pool created: max_workers=%d, thread_prefix=%s",
+                    self._max_workers,
+                    self._name,
+                )
             return self._executor
 
     async def run(self, func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
