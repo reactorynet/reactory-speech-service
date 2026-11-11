@@ -1,25 +1,42 @@
-"""TTS service wrapping Kokoro ONNX for text-to-speech synthesis."""
+"""Synthesis orchestrator.
 
-import io
+:class:`TTSService` is now a thin orchestrator over the engine adapter layer:
+
+* it resolves a request to an engine through :class:`EngineRouter`,
+* it reports what direction the engine applied or ignored,
+* and it keeps the long-standing ``synthesize`` / ``synthesize_streaming``
+  signatures working byte-for-byte for callers that send nothing new.
+
+Kokoro-specific knowledge (model loading, voice resolution, phonemisation,
+language mapping, speed clamping) lives in :mod:`app.engines.kokoro`.
+"""
+
+from __future__ import annotations
+
 import logging
-from pathlib import Path
+from collections.abc import Iterable, Iterator
 
 import numpy as np
-import soundfile as sf
 
-from app.config import settings
+from app.core.contracts import (
+    AudioResult,
+    Direction,
+    DirectionPlan,
+    EngineRequest,
+    Prosody,
+)
+from app.core.direction import resolve_direction
+from app.engines.base import EngineUnavailableError, UnknownEngineError, lower_direction
+from app.engines.kokoro import KokoroEngine
+from app.engines.manager import EngineManager
+from app.engines.router import EngineRouter
 from app.services.phonetic_converter import phonetic_converter
 from app.services.voice_registry import (
-    DEFAULT_LOCALE,
     KOKORO_ENGINE,
     KOKORO_SAMPLE_RATE,
     KOKORO_SPEED_MAX,
     KOKORO_SPEED_MIN,
-    SHIPPED_VOICE_IDS,
     VoiceDescriptor,
-    build_catalogue,
-    describe_voice,
-    kokoro_capabilities,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,145 +52,154 @@ SPEED_MIN = KOKORO_SPEED_MIN
 SPEED_MAX = KOKORO_SPEED_MAX
 
 
+def _legacy_direction(speed: float | None) -> Direction:
+    """Build a direction from the legacy ``speed`` alias.
+
+    ``speed`` reaches this function from the WebSocket endpoint, which bypasses
+    the schema, so the value is passed through *without* re-validation and the
+    adapter clamps it defensively — exactly as before this change.
+    """
+    if speed is None:
+        return Direction()
+    return Direction(prosody=Prosody.model_construct(rate=float(speed)))
+
+
 class TTSService:
-    """Text-to-speech service using Kokoro ONNX with phonetic pre-processing and custom lexicons."""
+    """Engine-agnostic synthesis orchestrator with a Kokoro adapter registered."""
 
     def __init__(self) -> None:
-        self._kokoro = None
-        self._ready = False
+        self._kokoro_engine = KokoroEngine()
+        self._manager = EngineManager([self._kokoro_engine])
+        self._router = EngineRouter(self._manager, order=[KOKORO_ENGINE])
+
+    # ------------------------------------------------------------------
+    # Backwards-compatible internals
+    # ------------------------------------------------------------------
+    # The Phase 0 test-suite (and, historically, the service itself) reaches for
+    # ``_kokoro`` and ``_ready``.  They now proxy the Kokoro adapter instead of
+    # duplicating its state.
+
+    @property
+    def _kokoro(self):
+        return self._kokoro_engine.model
+
+    @_kokoro.setter
+    def _kokoro(self, value) -> None:
+        self._kokoro_engine.model = value
+
+    @property
+    def _ready(self) -> bool:
+        return self._kokoro_engine.is_ready
+
+    @_ready.setter
+    def _ready(self, value: bool) -> None:
+        self._kokoro_engine.set_ready(value)
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """Load the Kokoro ONNX model. Call once at startup."""
-        try:
-            from kokoro_onnx import Kokoro
-
-            model_path = None
-            if settings.kokoro_model_resolved.exists():
-                model_path = str(settings.kokoro_model_resolved)
-            else:
-                candidates = list(Path(settings.models_dir).glob("kokoro*.onnx"))
-                if candidates:
-                    model_path = str(candidates[0])
-
-            if not model_path:
-                logger.warning(
-                    "Kokoro ONNX model not found in %s. TTS service disabled.",
-                    settings.models_dir,
-                )
-                self._ready = False
-                return
-
-            voices_path = None
-            if settings.kokoro_voices_resolved.exists():
-                voices_path = str(settings.kokoro_voices_resolved)
-            else:
-                candidates = list(Path(settings.models_dir).glob("voices*.bin"))
-                if candidates:
-                    voices_path = str(candidates[0])
-
-            if not voices_path:
-                logger.warning(
-                    "Kokoro voices pack not found in %s. TTS service disabled.",
-                    settings.models_dir,
-                )
-                self._ready = False
-                return
-
-            logger.info("Loading Kokoro TTS model from %s (voices: %s)", model_path, voices_path)
-            self._kokoro = Kokoro(model_path, voices_path)
-            self._ready = True
-            logger.info(
-                "Kokoro TTS model loaded successfully with %d voices.",
-                len(self.voice_ids),
-            )
-        except FileNotFoundError:
-            logger.error("Kokoro model files not found. Run scripts/download_models.py first.")
-            self._ready = False
-        except Exception:
-            logger.exception("Failed to load Kokoro TTS model")
-            self._ready = False
+        """Load every registered engine. Call once at startup."""
+        await self._manager.initialize()
 
     @property
     def is_ready(self) -> bool:
-        return self._ready
+        return self._manager.any_ready()
+
+    @property
+    def engine_manager(self) -> EngineManager:
+        """The engine manager, for readiness and capability reporting."""
+        return self._manager
+
+    @property
+    def engine_router(self) -> EngineRouter:
+        """The router, exposed so callers can inspect the fallback order."""
+        return self._router
+
+    # ------------------------------------------------------------------
+    # Voices
+    # ------------------------------------------------------------------
 
     @property
     def engine_voice_ids(self) -> list[str] | None:
-        """Voice ids exposed by the loaded engine, or ``None`` when none is loaded.
-
-        The voice pack is the single source of truth for the catalogue: this reads
-        the keys of ``kokoro_onnx.Kokoro.voices`` directly instead of a hard-coded
-        allow-list.
-        """
-        kokoro = self._kokoro
-        if kokoro is None:
-            return None
-
-        voices = getattr(kokoro, "voices", None)
-        if voices is None:
-            return None
-
-        try:
-            keys = list(voices.keys())
-        except AttributeError:
-            return None
-
-        return sorted(str(key) for key in keys)
+        """Voice ids exposed by the loaded engine, or ``None`` when none is loaded."""
+        return self._kokoro_engine.engine_voice_ids
 
     @property
     def voice_ids(self) -> list[str]:
-        """All voice ids this deployment exposes.
-
-        Engine keys win whenever an engine is loaded; before the model is loaded we
-        fall back to the manifest of the shipped pack so that voice discovery works
-        without inference.  The fallback is never used to reject a voice.
-        """
-        engine_ids = self.engine_voice_ids
-        if engine_ids is not None:
-            return engine_ids
-        return list(SHIPPED_VOICE_IDS)
+        """All voice ids this deployment exposes."""
+        return self._kokoro_engine.available_voice_ids()
 
     def get_voices(self) -> list[dict]:
         """Return the enriched voice catalogue for this deployment."""
-        return list(build_catalogue(self.voice_ids, engine=ENGINE_ID))
+        catalogue: list[VoiceDescriptor] = []
+        for engine in self._manager.engines:
+            catalogue.extend(engine.voices())
+        return list(catalogue)
 
     def get_voice(self, voice_id: str) -> VoiceDescriptor | None:
         """Return the descriptor for one voice, or ``None`` when it is unknown."""
-        if voice_id not in self.voice_ids:
-            return None
-        return build_catalogue([voice_id], engine=ENGINE_ID)[0]
+        for engine in self._manager.engines:
+            for descriptor in engine.voices():
+                if descriptor["id"] == voice_id:
+                    return descriptor
+        return None
+
+    # ------------------------------------------------------------------
+    # Capabilities
+    # ------------------------------------------------------------------
 
     def capabilities(self) -> dict:
-        """Describe the TTS engines available in this deployment."""
-        return kokoro_capabilities(
-            self.get_voices(),
-            available=self._ready,
-            default_voice=settings.kokoro_default_voice,
-        )
+        """Describe the default engine (Phase 0 shape, kept for compatibility)."""
+        return self._kokoro_engine.descriptor()
+
+    def capability_matrix(self) -> list[dict]:
+        """One capability payload per registered engine."""
+        return self._manager.descriptors()
+
+    # ------------------------------------------------------------------
+    # Direction
+    # ------------------------------------------------------------------
+
+    def resolve_engine(
+        self,
+        *,
+        voice: str | None = None,
+        engine: str | None = None,
+        fallback: Iterable[str] | None = None,
+    ):
+        """Resolve the primary engine for a request."""
+        return self._router.resolve(engine=engine, voice=voice, fallback=fallback)
+
+    def plan_direction(
+        self,
+        *,
+        voice: str | None = None,
+        engine: str | None = None,
+        direction: Direction | None = None,
+        fallback: Iterable[str] | None = None,
+    ) -> DirectionPlan:
+        """Report what a direction would apply, without running inference.
+
+        The adapter's own lowering is used when it provides one, so the plan and
+        the synthesis result cannot drift (for example on rate clamping).
+        """
+        target = self._router.resolve(engine=engine, voice=voice, fallback=fallback)
+        requested = direction or Direction()
+        lower = getattr(target, "lower", None)
+        if callable(lower):
+            return lower(requested)
+        return lower_direction(requested, target.capabilities())
 
     @staticmethod
     def clamp_speed(speed: float | None) -> float:
-        """Clamp the speed multiplier into the range kokoro-onnx accepts.
+        """Clamp the speed multiplier into the range kokoro-onnx accepts."""
+        return KokoroEngine.clamp_speed(speed)
 
-        The request schema rejects out-of-range values with a 422 before inference;
-        this is the defensive backstop for callers that bypass schema validation
-        (the WebSocket endpoint) and for an out-of-range ``KOKORO_DEFAULT_SPEED``.
-        """
-        value = settings.kokoro_default_speed if speed is None else float(speed)
-        return max(SPEED_MIN, min(SPEED_MAX, value))
-
-    def _resolve_voice(self, voice: str | None) -> tuple[str, str]:
-        """Resolve a requested voice to its engine id and engine language code."""
-        voice_id = voice or settings.kokoro_default_voice
-        available = self.engine_voice_ids
-        if available is not None and voice_id not in available:
-            raise ValueError(
-                f"Unknown voice '{voice_id}'. This deployment exposes "
-                f"{len(available)} voices; GET /api/tts/voices lists them all."
-            )
-
-        descriptor = describe_voice(voice_id, engine=ENGINE_ID)
-        return voice_id, descriptor["locale"] if descriptor else DEFAULT_LOCALE
+    # ------------------------------------------------------------------
+    # Synthesis
+    # ------------------------------------------------------------------
 
     def synthesize(
         self,
@@ -186,40 +212,62 @@ class TTSService:
     ) -> tuple[bytes, float]:
         """Synthesize text to WAV audio bytes.
 
-        Returns (wav_bytes, duration_seconds).
+        Returns ``(wav_bytes, duration_seconds)``.  This legacy signature is
+        unchanged; the richer result is available from
+        :meth:`synthesize_detailed`.
         """
-        if not self._ready or self._kokoro is None:
-            raise RuntimeError("TTS service not initialized")
+        result = self.synthesize_detailed(
+            text,
+            voice=voice,
+            direction=_legacy_direction(speed),
+            is_phonemes=is_phonemes,
+            phonetic_preprocess=phonetic_preprocess,
+            custom_lexicon=custom_lexicon,
+        )
+        return result.audio, result.duration
 
-        voice_id, voice_lang = self._resolve_voice(voice)
-        speed = self.clamp_speed(speed)
+    def synthesize_detailed(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        speed: float | None = None,
+        direction: Direction | None = None,
+        engine: str | None = None,
+        is_phonemes: bool = False,
+        phonetic_preprocess: bool | None = None,
+        custom_lexicon: dict[str, str] | None = None,
+        fallback: Iterable[str] | None = None,
+    ) -> AudioResult:
+        """Synthesize and return the audio plus the applied/ignored contract.
 
-        should_phonemize = (
-            phonetic_preprocess
-            if phonetic_preprocess is not None
-            else settings.phonetic_processing_enabled
+        ``direction`` wins over ``speed`` when both carry a rate; the router calls
+        :func:`app.core.direction.resolve_direction` first, so that precedence is
+        reported in the response.  Engines that cannot render (model not loaded)
+        are skipped in favour of the next candidate in the ordered fallback list.
+        """
+        merged, _ = resolve_direction(speed, direction)
+        request = EngineRequest(
+            text=text,
+            voice=voice,
+            direction=merged,
+            is_phonemes=is_phonemes,
+            phonetic_preprocess=phonetic_preprocess,
+            custom_lexicon=custom_lexicon,
         )
 
-        if is_phonemes:
-            # Caller supplied phonemes directly
-            samples, sample_rate = self._kokoro.create(
-                text, voice=voice_id, speed=speed, lang=voice_lang, is_phonemes=True
-            )
-        elif should_phonemize and phonetic_converter.is_available:
-            phonetic_text = phonetic_converter.convert_to_phonetic(
-                text, language=voice_lang, custom_lexicon=custom_lexicon
-            )
-            samples, sample_rate = self._kokoro.create(
-                phonetic_text, voice=voice_id, speed=speed, lang=voice_lang, is_phonemes=True
-            )
-        else:
-            samples, sample_rate = self._kokoro.create(
-                text, voice=voice_id, speed=speed, lang=voice_lang, is_phonemes=False
-            )
+        unavailable: EngineUnavailableError | None = None
+        candidates = self._router.candidates(engine=engine, voice=voice, fallback=fallback)
+        for target in candidates:
+            try:
+                return target.synthesize(request)
+            except EngineUnavailableError as exc:
+                logger.warning("TTS engine '%s' is unavailable: %s", target.id, exc)
+                unavailable = exc
 
-        duration = len(samples) / sample_rate
-        wav_bytes = self._samples_to_wav(samples, sample_rate)
-        return wav_bytes, duration
+        if unavailable is not None:
+            raise unavailable
+        raise UnknownEngineError("No TTS engine could serve the request")
 
     def synthesize_streaming(
         self,
@@ -229,44 +277,31 @@ class TTSService:
         is_phonemes: bool = False,
         phonetic_preprocess: bool | None = None,
         custom_lexicon: dict[str, str] | None = None,
-    ):
-        """Generator that yields (wav_chunk_bytes, duration) per sentence."""
-        if not self._ready or self._kokoro is None:
-            raise RuntimeError("TTS service not initialized")
+        engine: str | None = None,
+        direction: Direction | None = None,
+    ) -> Iterator[tuple[bytes, float]]:
+        """Generator that yields ``(wav_chunk_bytes, duration)`` per sentence.
 
-        voice_id, voice_lang = self._resolve_voice(voice)
-        speed = self.clamp_speed(speed)
-
-        should_phonemize = (
-            phonetic_preprocess
-            if phonetic_preprocess is not None
-            else settings.phonetic_processing_enabled
+        ``engine`` is an explicit override and is resolved through the same
+        router as one-shot synthesis, so an unknown engine raises
+        :class:`UnknownEngineError` and a known one really is the engine that
+        renders the audio.  ``direction`` defaults to the legacy ``speed`` alias.
+        """
+        request = EngineRequest(
+            text=text,
+            voice=voice,
+            direction=direction if direction is not None else _legacy_direction(speed),
+            is_phonemes=is_phonemes,
+            phonetic_preprocess=phonetic_preprocess,
+            custom_lexicon=custom_lexicon,
         )
+        target = self._router.resolve(engine=engine, voice=voice)
+        for chunk in target.stream(request):
+            yield chunk.audio, chunk.duration
 
-        sentences = self._split_sentences(text)
-        for sentence in sentences:
-            if not sentence.strip():
-                continue
-
-            if is_phonemes:
-                samples, sample_rate = self._kokoro.create(
-                    sentence, voice=voice_id, speed=speed, lang=voice_lang, is_phonemes=True
-                )
-            elif should_phonemize and phonetic_converter.is_available:
-                p_text = phonetic_converter.convert_to_phonetic(
-                    sentence, language=voice_lang, custom_lexicon=custom_lexicon
-                )
-                samples, sample_rate = self._kokoro.create(
-                    p_text, voice=voice_id, speed=speed, lang=voice_lang, is_phonemes=True
-                )
-            else:
-                samples, sample_rate = self._kokoro.create(
-                    sentence, voice=voice_id, speed=speed, lang=voice_lang, is_phonemes=False
-                )
-
-            duration = len(samples) / sample_rate
-            wav_bytes = self._samples_to_wav(samples, sample_rate)
-            yield wav_bytes, duration
+    # ------------------------------------------------------------------
+    # Phonemisation (transport-facing helper, untouched by the adapter split)
+    # ------------------------------------------------------------------
 
     def phonemize(
         self,
@@ -289,15 +324,19 @@ class TTSService:
     @staticmethod
     def _samples_to_wav(samples: np.ndarray, sample_rate: int) -> bytes:
         """Convert float32 numpy samples to WAV bytes."""
-        buf = io.BytesIO()
-        sf.write(buf, samples, sample_rate, format="WAV", subtype="PCM_16")
-        buf.seek(0)
-        return buf.read()
+        return KokoroEngine.samples_to_wav(samples, sample_rate)
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
         """Simple sentence splitter for streaming TTS."""
-        import re
+        return KokoroEngine.split_sentences(text)
 
-        parts = re.split(r"(?<=[.!?])\s+", text)
-        return [p for p in parts if p.strip()]
+
+__all__: list[str] = [
+    "ENGINE_ID",
+    "SAMPLE_RATE",
+    "SPEED_MAX",
+    "SPEED_MIN",
+    "TTSService",
+    "lower_direction",
+]

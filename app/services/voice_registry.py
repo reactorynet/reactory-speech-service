@@ -1,38 +1,33 @@
-"""Voice catalogue for the Kokoro voice pack.
+"""Data-driven voice registry.
 
-The shipped voice pack (``models/voices-v1.0.bin``) is the single source of truth
-for *which* voices exist.  :meth:`app.services.tts_service.TTSService.get_voices`
-enumerates the keys exposed by the loaded ``kokoro_onnx.Kokoro`` instance and
-passes them to :func:`build_catalogue`; this module never acts as an allow-list.
-It only *enriches* ids with presentation metadata.
+``app/data/voices.json`` is the **only** source of voice data for the speech
+service.  Engine adapters, routers and services must never hard-code a voice id;
+they ask this module instead.  A test greps ``app/services``, ``app/routers`` and
+``app/engines`` for registry ids to keep that true.
 
-Metadata is derived from the voice id wherever possible.  Kokoro ids follow the
-scheme ``<language><gender>_<name>``:
+Two things are deliberately *not* voice data and stay in code:
 
-* first character  → language family (``a`` → ``en-US``, ``b`` → ``en-GB``,
-  ``j`` → ``ja``, ``z`` → ``zh``, ``e`` → ``es``, ``f`` → ``fr-FR``,
-  ``h`` → ``hi``, ``i`` → ``it``, ``p`` → ``pt-BR``)
-* second character → gender (``f`` → female, ``m`` → male)
-* the remainder    → display name (``af_heart`` → ``Heart``)
+* :data:`LANGUAGE_FAMILIES` — the Kokoro id *scheme* (``<language><gender>_<name>``)
+  used as a fallback for ids that are not (yet) in the registry, and
+* engine constants such as the sample rate and the speed range, which describe
+  the engine rather than a voice.
 
-``locale`` is the code handed to the engine for phonemization.  It is the
-lower-case form of the language tag, except for Mandarin Chinese: espeak-ng (the
-G2P backend used by kokoro-onnx) only accepts the ``cmn`` alias for it and fails
-on ``zh``.
-
-Quality grades reproduce ``docs/voices/kokoro-voice-catalogue.md`` (the catalogue
-of record) exactly, and only for the voices that document actually grades: it
-publishes grades for 47 of the 54 voices.  The remaining 7 are listed in
-:data:`UNGRADED_VOICE_IDS` and report ``quality: null`` — they are surfaced as
-*unrated* rather than being given an invented grade.  Do not add an entry to
-:data:`QUALITY_GRADES` for a voice the document does not grade; update the
-document first, then this table.
+A record carries identity, language, licence, provenance, capability flags and a
+``style_spec`` describing how to render it.  ``enabled`` is honoured everywhere:
+a disabled record is neither advertised nor synthesised.
 """
 
+from __future__ import annotations
+
+import json
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import TypedDict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from app.config import settings
+from app.core.contracts import VoiceDescriptor
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +51,9 @@ DEFAULT_LOCALE = "en-us"
 #: Tag applied to a voice whose quality grade the catalogue does not publish.
 UNRATED_TAG = "unrated"
 
+#: Tag applied to a voice graded ``C+`` or above.
+RECOMMENDED_TAG = "recommended"
+
 #: Grade slugs used for the ``grade-*`` tags, so ``A`` and ``A-`` stay distinct.
 GRADE_TAGS: dict[str, str] = {
     "A": "grade-a",
@@ -69,12 +67,48 @@ GRADE_TAGS: dict[str, str] = {
     "F+": "grade-f-plus",
 }
 
-#: Grades the catalogue calls "candidates for customer-facing defaults"
-#: (docs/voices/kokoro-voice-catalogue.md: "Treat C+ and above as ...").
+#: Grades the catalogue calls "candidates for customer-facing defaults".
 CUSTOMER_FACING_GRADES: frozenset[str] = frozenset({"A", "A-", "B-", "C+"})
 
-#: Tag applied to a voice graded ``C+`` or above.
-RECOMMENDED_TAG = "recommended"
+#: Licences accepted for a voice record.  The product direction is permissive
+#: models only; adding a licence here is a deliberate decision, not a default.
+PERMISSIVE_LICENSES: frozenset[str] = frozenset(
+    {
+        "Apache-2.0",
+        "MIT",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "0BSD",
+    }
+)
+
+#: Fields every registry record must carry (see the ticket's scope item 4).
+REQUIRED_VOICE_FIELDS: tuple[str, ...] = (
+    "id",
+    "name",
+    "engine",
+    "language",
+    "gender",
+    "tags",
+    "quality",
+    "license",
+    "attribution",
+    "style_spec",
+    "supports",
+    "enabled",
+)
+
+#: Style spec kinds defined by ADR-0002.
+STYLE_SPEC_TYPES: frozenset[str] = frozenset({"base", "blend", "reference"})
+
+#: Location of the registry file, resolved relative to the package so the service
+#: works regardless of the process working directory.
+DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "data" / "voices.json"
+
+
+class VoiceRegistryError(ValueError):
+    """The registry file is missing, malformed or violates the schema."""
 
 
 @dataclass(frozen=True)
@@ -110,236 +144,303 @@ LANGUAGE_FAMILIES: dict[str, LanguageFamily] = {
 #: Kokoro id second character → gender.
 GENDERS: dict[str, str] = {"f": "female", "m": "male"}
 
-#: Published quality grades, keyed by voice id.
-#:
-#: Transcribed from the "Quality grades" table in
-#: ``docs/voices/kokoro-voice-catalogue.md``; 47 voices.  The seven voices the
-#: document leaves ungraded are deliberately absent — see
-#: :data:`UNGRADED_VOICE_IDS`.
-QUALITY_GRADES: dict[str, str] = {
-    # American English
-    "af_heart": "A",
-    "af_bella": "A-",
-    "af_nicole": "B-",
-    "af_aoede": "C+",
-    "af_kore": "C+",
-    "af_sarah": "C+",
-    "af_alloy": "C",
-    "af_nova": "C",
-    "af_sky": "C-",
-    "af_jessica": "D",
-    "af_river": "D",
-    "am_fenrir": "C+",
-    "am_michael": "C+",
-    "am_puck": "C+",
-    "am_echo": "D",
-    "am_eric": "D",
-    "am_liam": "D",
-    "am_onyx": "D",
-    "am_santa": "D-",
-    "am_adam": "F+",
-    # British English
-    "bf_emma": "B-",
-    "bf_isabella": "C",
-    "bf_lily": "C",
-    "bm_fable": "C",
-    "bm_george": "C",
-    "bf_alice": "D",
-    "bm_daniel": "D",
-    # Japanese
-    "jf_alpha": "C+",
-    "jf_gongitsune": "C",
-    "jf_tebukuro": "C",
-    "jf_nezumi": "C-",
-    "jm_kumo": "C-",
-    # Mandarin Chinese (``zf_*`` and ``zm_*`` are graded C as a block)
-    "zf_xiaobei": "C",
-    "zf_xiaoni": "C",
-    "zf_xiaoxiao": "C",
-    "zf_xiaoyi": "C",
-    "zm_yunjian": "C",
-    "zm_yunxi": "C",
-    "zm_yunxia": "C",
-    "zm_yunyang": "C",
-    # French
-    "ff_siwis": "B-",
-    # Hindi
-    "hf_alpha": "C",
-    "hf_beta": "C",
-    "hm_omega": "C",
-    "hm_psi": "C",
-    # Italian
-    "if_sara": "C",
-    "im_nicola": "C",
-}
 
-#: Voices shipped in the pack that the catalogue of record does not grade.
-#:
-#: They are fully usable and fully exposed; only their ``quality`` is ``null``,
-#: because publishing a grade for them would be inventing data.
-UNGRADED_VOICE_IDS: tuple[str, ...] = (
-    "bm_lewis",
-    "ef_dora",
-    "em_alex",
-    "em_santa",
-    "pf_dora",
-    "pm_alex",
-    "pm_santa",
-)
-
-#: Voice ids shipped in the v1.0 voice pack.
-#:
-#: A literal manifest, deliberately NOT derived from :data:`QUALITY_GRADES`:
-#: "which voices exist" must not depend on "which voices have a published grade".
-#: Used only for discovery before an engine is loaded; as soon as an engine is
-#: available its own ``voices`` keys take precedence, and this tuple is never used
-#: to reject a voice.
-SHIPPED_VOICE_IDS: tuple[str, ...] = (
-    "af_alloy",
-    "af_aoede",
-    "af_bella",
-    "af_heart",
-    "af_jessica",
-    "af_kore",
-    "af_nicole",
-    "af_nova",
-    "af_river",
-    "af_sarah",
-    "af_sky",
-    "am_adam",
-    "am_echo",
-    "am_eric",
-    "am_fenrir",
-    "am_liam",
-    "am_michael",
-    "am_onyx",
-    "am_puck",
-    "am_santa",
-    "bf_alice",
-    "bf_emma",
-    "bf_isabella",
-    "bf_lily",
-    "bm_daniel",
-    "bm_fable",
-    "bm_george",
-    "bm_lewis",
-    "ef_dora",
-    "em_alex",
-    "em_santa",
-    "ff_siwis",
-    "hf_alpha",
-    "hf_beta",
-    "hm_omega",
-    "hm_psi",
-    "if_sara",
-    "im_nicola",
-    "jf_alpha",
-    "jf_gongitsune",
-    "jf_nezumi",
-    "jf_tebukuro",
-    "jm_kumo",
-    "pf_dora",
-    "pm_alex",
-    "pm_santa",
-    "zf_xiaobei",
-    "zf_xiaoni",
-    "zf_xiaoxiao",
-    "zf_xiaoyi",
-    "zm_yunjian",
-    "zm_yunxi",
-    "zm_yunxia",
-    "zm_yunyang",
-)
-
-
-class VoiceDescriptor(TypedDict):
-    """Enriched description of a single voice.
-
-    ``quality`` is ``None`` when the catalogue of record does not grade the voice.
-    """
+@dataclass(frozen=True)
+class VoiceRecord:
+    """One voice record, exactly as stored in the registry file."""
 
     id: str
     name: str
-    language: str
-    locale: str
-    gender: str
     engine: str
+    language: str
+    gender: str
+    tags: tuple[str, ...]
     quality: str | None
-    tags: list[str]
+    license: str
+    attribution: str
+    style_spec: dict[str, Any]
+    supports: dict[str, bool]
+    enabled: bool
+    locale: str = DEFAULT_LOCALE
+    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    def descriptor(self, engine: str | None = None) -> VoiceDescriptor:
+        """Return the public descriptor shape for this record."""
+        return VoiceDescriptor(
+            id=self.id,
+            name=self.name,
+            language=self.language,
+            locale=self.locale,
+            gender=self.gender,
+            engine=engine or self.engine,
+            quality=self.quality,
+            tags=list(self.tags),
+        )
+
+    @property
+    def style_type(self) -> str:
+        """The style-spec kind: ``base``, ``blend`` or ``reference``."""
+        return str(self.style_spec.get("type", "base"))
+
+    @property
+    def engine_voice_id(self) -> str:
+        """The key the engine itself uses for this voice.
+
+        For a ``base`` record this is the ``style_spec.voice`` value; for any
+        other style kind the record's own id, because resolving it is the
+        adapter's (future) job.
+        """
+        if self.style_type == "base":
+            return str(self.style_spec.get("voice") or self.id)
+        return self.id
+
+
+@dataclass(frozen=True)
+class VoiceRegistry:
+    """An immutable view over the voice registry file."""
+
+    voices: dict[str, VoiceRecord]
+    default_voice: str
+    license: str = "Apache-2.0"
+    attribution: str = ""
+    schema_version: int = 1
+
+    def get(self, voice_id: str) -> VoiceRecord | None:
+        """Return one record, or ``None`` when the id is not registered."""
+        return self.voices.get(voice_id)
+
+    def ids(self, *, engine: str | None = None, enabled_only: bool = False) -> tuple[str, ...]:
+        """Every registered id, optionally filtered by engine / enabled flag."""
+        return tuple(
+            record.id
+            for record in self.voices.values()
+            if (engine is None or record.engine == engine)
+            and (record.enabled or not enabled_only)
+        )
+
+    def for_engine(self, engine: str, *, enabled_only: bool = True) -> list[VoiceRecord]:
+        """Every record belonging to one engine, in registry order."""
+        return [
+            record
+            for record in self.voices.values()
+            if record.engine == engine and (record.enabled or not enabled_only)
+        ]
+
+    def descriptors(
+        self, voice_ids: Iterable[str] | None = None
+    ) -> list[VoiceDescriptor]:
+        """Descriptors for the given ids (default: every enabled record)."""
+        ids = list(voice_ids) if voice_ids is not None else list(self.ids(enabled_only=True))
+        result: list[VoiceDescriptor] = []
+        for voice_id in ids:
+            record = self.get(voice_id)
+            if record is not None:
+                result.append(record.descriptor())
+        return result
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise VoiceRegistryError(message)
+
+
+def _parse_record(entry: dict[str, Any], index: int) -> VoiceRecord:
+    missing = [name for name in REQUIRED_VOICE_FIELDS if name not in entry]
+    _require(not missing, f"voice record #{index} is missing required fields: {missing}")
+
+    voice_id = entry["id"]
+    _require(isinstance(voice_id, str) and bool(voice_id), f"voice record #{index} has no id")
+
+    license_name = str(entry["license"])
+    _require(
+        license_name in PERMISSIVE_LICENSES,
+        f"voice '{voice_id}' declares licence '{license_name}', which is not a "
+        f"permissive licence ({sorted(PERMISSIVE_LICENSES)})",
+    )
+
+    style_spec = entry["style_spec"]
+    _require(isinstance(style_spec, dict), f"voice '{voice_id}' has a non-object style_spec")
+    style_type = str(style_spec.get("type", "base"))
+    _require(
+        style_type in STYLE_SPEC_TYPES,
+        f"voice '{voice_id}' has unknown style_spec type '{style_type}'",
+    )
+    if style_type == "base":
+        _require(
+            bool(style_spec.get("voice")),
+            f"voice '{voice_id}' has a base style_spec without an engine voice id",
+        )
+
+    tags = entry["tags"]
+    _require(isinstance(tags, list), f"voice '{voice_id}' tags must be a list")
+
+    language = str(entry["language"])
+    locale = str(entry.get("locale") or _locale_for_language(language))
+
+    return VoiceRecord(
+        id=voice_id,
+        name=str(entry["name"]),
+        engine=str(entry["engine"]),
+        language=language,
+        gender=str(entry["gender"]),
+        tags=tuple(str(tag) for tag in tags),
+        quality=entry["quality"],
+        license=license_name,
+        attribution=str(entry["attribution"]),
+        style_spec=dict(style_spec),
+        supports=dict(entry["supports"]),
+        enabled=bool(entry["enabled"]),
+        locale=locale,
+        raw=dict(entry),
+    )
+
+
+def _locale_for_language(language: str) -> str:
+    """Map a canonical language tag to the code espeak-ng/kokoro-onnx expects."""
+    for family in LANGUAGE_FAMILIES.values():
+        if family.language == language:
+            return family.locale
+    return DEFAULT_LOCALE
+
+
+def load_voice_registry(path: str | Path | None = None) -> VoiceRegistry:
+    """Load and validate the registry file.
+
+    Raises :class:`VoiceRegistryError` for a missing file, invalid JSON, missing
+    required fields, duplicate ids or a non-permissive licence.  Failing loudly at
+    startup is intentional: a half-loaded registry would silently hide voices.
+    """
+    registry_path = Path(path) if path is not None else DEFAULT_REGISTRY_PATH
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise VoiceRegistryError(f"voice registry not found: {registry_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise VoiceRegistryError(f"voice registry is not valid JSON: {exc}") from exc
+
+    _require(isinstance(payload, dict), "voice registry must be a JSON object")
+    entries = payload.get("voices")
+    _require(isinstance(entries, list) and bool(entries), "voice registry has no 'voices' list")
+
+    voices: dict[str, VoiceRecord] = {}
+    for index, entry in enumerate(entries):
+        _require(isinstance(entry, dict), f"voice record #{index} is not an object")
+        record = _parse_record(entry, index)
+        _require(record.id not in voices, f"duplicate voice id '{record.id}' in the registry")
+        voices[record.id] = record
+
+    default_voice = str(payload.get("default_voice") or next(iter(voices)))
+    _require(
+        default_voice in voices,
+        f"default_voice '{default_voice}' is not present in the registry",
+    )
+
+    return VoiceRegistry(
+        voices=voices,
+        default_voice=default_voice,
+        license=str(payload.get("license", "Apache-2.0")),
+        attribution=str(payload.get("attribution", "")),
+        schema_version=int(payload.get("schema_version", 1)),
+    )
+
+
+#: The process-wide registry.  Reading it is cheap; writing it is a later phase.
+VOICE_REGISTRY = load_voice_registry()
+
+#: Every voice id in the registry, in registry order.
+SHIPPED_VOICE_IDS: tuple[str, ...] = VOICE_REGISTRY.ids()
+
+#: Published quality grades, derived from the registry (never hand-maintained).
+QUALITY_GRADES: dict[str, str] = {
+    record.id: record.quality
+    for record in VOICE_REGISTRY.voices.values()
+    if record.quality is not None
+}
+
+#: Voices the catalogue of record does not grade; their ``quality`` is ``None``.
+UNGRADED_VOICE_IDS: tuple[str, ...] = tuple(
+    record.id for record in VOICE_REGISTRY.voices.values() if record.quality is None
+)
+
+
+def get_record(voice_id: str) -> VoiceRecord | None:
+    """Return the registry record for a voice id, or ``None``."""
+    return VOICE_REGISTRY.get(voice_id)
+
+
+def default_voice_id(available: Iterable[str] | None = None) -> str:
+    """The effective default voice id for this deployment.
+
+    ``KOKORO_DEFAULT_VOICE`` predates the registry and is still honoured: a
+    deployment that configures a default must keep getting that voice, otherwise
+    upgrading silently changes the audio it serves.
+
+    The configured value is validated against the registry so a typo cannot
+    silently switch the voice: an id that is unknown (and not exposed by the
+    engine) or explicitly disabled in the registry falls back to the registry's
+    own ``default_voice`` with a warning.  ``available`` is the voice ids the
+    engine currently exposes, which lets a custom voice pack keep a configured
+    default the registry does not describe yet.
+    """
+    configured = (getattr(settings, "kokoro_default_voice", "") or "").strip()
+    if configured:
+        record = VOICE_REGISTRY.get(configured)
+        if record is not None:
+            if record.enabled:
+                return record.id
+            logger.warning(
+                "KOKORO_DEFAULT_VOICE=%r is disabled in the voice registry; using %r instead.",
+                configured,
+                VOICE_REGISTRY.default_voice,
+            )
+            return VOICE_REGISTRY.default_voice
+        if available is not None and configured in set(available):
+            # A custom voice pack may ship ids the registry does not describe yet.
+            logger.warning(
+                "KOKORO_DEFAULT_VOICE=%r is not in the voice registry; using it because the "
+                "engine exposes it.",
+                configured,
+            )
+            return configured
+        logger.warning(
+            "KOKORO_DEFAULT_VOICE=%r is not an enabled voice in the registry; using %r instead. "
+            "GET /api/tts/voices lists the valid ids.",
+            configured,
+            VOICE_REGISTRY.default_voice,
+        )
+    return VOICE_REGISTRY.default_voice
 
 
 def _display_name(voice_id: str) -> str:
-    """Derive the display name from the id suffix (``af_heart`` → ``Heart``)."""
+    """Derive a display name from an unregistered id suffix."""
     _, _, suffix = voice_id.partition("_")
     return suffix.replace("_", " ").title()
 
 
-def _build_tags(family: LanguageFamily, gender: str, quality: str | None) -> list[str]:
-    """Derive the filterable tag list for a voice.
-
-    An ungraded voice gets :data:`UNRATED_TAG` instead of a ``grade-*`` tag.
-    ``recommended`` follows the catalogue's guidance ("treat C+ and above as
-    candidates for customer-facing defaults"), so it is not limited to grade A.
-    """
-    tags = [gender, family.name]
-    if family.variant:
-        tags.append(family.variant)
-    if quality is None:
-        tags.append(UNRATED_TAG)
-        return tags
-    tags.append(GRADE_TAGS[quality])
-    if quality in CUSTOMER_FACING_GRADES:
-        tags.append(RECOMMENDED_TAG)
-    return tags
-
-
-def describe_voice(voice_id: str, engine: str = KOKORO_ENGINE) -> VoiceDescriptor | None:
-    """Enrich a Kokoro voice id with presentation metadata.
-
-    Returns ``None`` when the id does not follow the Kokoro scheme, so callers can
-    distinguish "unknown id" from "known id with default metadata".
-    """
-    if len(voice_id) < 3 or "_" not in voice_id[2:]:
+def describe_voice(voice_id: str, engine: str | None = None) -> VoiceDescriptor | None:
+    """Return the descriptor for a registered voice, or ``None`` when unknown."""
+    record = get_record(voice_id)
+    if record is None:
         return None
-
-    family = LANGUAGE_FAMILIES.get(voice_id[0])
-    gender = GENDERS.get(voice_id[1])
-    if family is None or gender is None:
-        return None
-
-    name = _display_name(voice_id)
-    if not name:
-        return None
-
-    quality = QUALITY_GRADES.get(voice_id)
-    return VoiceDescriptor(
-        id=voice_id,
-        name=name,
-        language=family.language,
-        locale=family.locale,
-        gender=gender,
-        engine=engine,
-        quality=quality,
-        tags=_build_tags(family, gender, quality),
-    )
+    return record.descriptor(engine=engine)
 
 
 def build_catalogue(
     voice_ids: Iterable[str], engine: str = KOKORO_ENGINE
 ) -> list[VoiceDescriptor]:
-    """Enrich every voice id an engine exposes, sorted by language then id.
+    """Enrich every id an engine exposes, sorted by language then id.
 
-    Ids that do not follow the Kokoro scheme are still returned (as ``und``
-    language) rather than silently hidden, mirroring the fact that the pack is
-    the source of truth for which voices exist.
+    Ids that are not in the registry are still returned (as ``und`` language,
+    ``unknown`` gender) rather than silently hidden: the engine's voice pack is
+    the source of truth for *which* voices exist, and the registry is the source
+    of truth for *what they are*.
     """
     catalogue: list[VoiceDescriptor] = []
     for voice_id in voice_ids:
         descriptor = describe_voice(voice_id, engine=engine)
         if descriptor is None:
             logger.warning(
-                "Voice id %r does not follow the Kokoro id scheme; exposing it with "
-                "default metadata.",
+                "Voice id %r is not in the voice registry; exposing it with default metadata.",
                 voice_id,
             )
             descriptor = VoiceDescriptor(
@@ -402,14 +503,16 @@ def kokoro_capabilities(
     available: bool,
     default_voice: str,
 ) -> dict:
-    """Describe what the Kokoro engine can and cannot do.
+    """Legacy capability payload for the Kokoro engine.
 
-    Kokoro is a CPU-first ONNX model with native rate (speed) control but no
-    native pitch, volume, style or cloning control.
+    Kept for callers written against Phase 0; new code reads
+    :meth:`app.engines.kokoro.KokoroEngine.capabilities` and
+    :meth:`app.engines.kokoro.KokoroEngine.descriptor`.
     """
     voice_list = list(voices)
     return {
         "id": KOKORO_ENGINE,
+        "engine": KOKORO_ENGINE,
         "name": "Kokoro-82M (ONNX)",
         "available": available,
         "license": "Apache-2.0",
@@ -422,7 +525,9 @@ def kokoro_capabilities(
         "styles": list(KOKORO_STYLES),
         "supports_cloning": False,
         "supports_streaming": True,
+        "supports_ssml": False,
         "sample_rates": [KOKORO_SAMPLE_RATE],
+        "max_chars": 10000,
         "gpu_required": False,
         "speed_range": [KOKORO_SPEED_MIN, KOKORO_SPEED_MAX],
     }

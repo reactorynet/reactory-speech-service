@@ -51,7 +51,7 @@ Copy `.env.example` to `.env` and customize:
 | Variable | Default | Description |
 |---|---|---|
 | `SPEECH_SERVICE_PORT` | `8765` | Server port |
-| `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice |
+| `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice. Must be an enabled voice id from `GET /api/tts/voices`; an unknown or disabled id falls back to the registry default |
 | `KOKORO_DEFAULT_SPEED` | `1.0` | Default speech speed |
 | `WHISPER_MODEL_SIZE` | `base` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_DEVICE` | `auto` | Device: `auto`, `cpu`, `cuda` |
@@ -163,7 +163,7 @@ Copy `.env.example` to `.env` and customize:
 | Variable | Default | Description |
 |---|---|---|
 | `SPEECH_SERVICE_PORT` | `8765` | Server port |
-| `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice |
+| `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice. Must be an enabled voice id from `GET /api/tts/voices`; an unknown or disabled id falls back to the registry default |
 | `KOKORO_DEFAULT_SPEED` | `1.0` | Default speech speed |
 | `WHISPER_MODEL_SIZE` | `base` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_DEVICE` | `auto` | Device: `auto`, `cpu`, `cuda` |

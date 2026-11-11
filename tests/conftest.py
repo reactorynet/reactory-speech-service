@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.contracts import DirectionPlan
+
 
 @pytest.fixture
 def mock_tts_service():
@@ -32,6 +34,30 @@ def mock_tts_service():
 
     service.synthesize.return_value = (fake_wav, 0.5)
     service.synthesize_streaming.return_value = iter([(fake_wav, 0.5)])
+    service.plan_direction.return_value = DirectionPlan(engine="kokoro")
+    service.capability_matrix.return_value = [
+        {
+            "id": "kokoro",
+            "engine": "kokoro",
+            "name": "Kokoro-82M (ONNX)",
+            "available": True,
+            "license": "Apache-2.0",
+            "languages": ["en-US"],
+            "voice_count": 2,
+            "default_voice": "af_heart",
+            "native_rate": True,
+            "native_pitch": False,
+            "native_volume": False,
+            "styles": ["neutral"],
+            "supports_cloning": False,
+            "supports_streaming": True,
+            "supports_ssml": False,
+            "sample_rates": [24000],
+            "max_chars": 10000,
+            "gpu_required": False,
+            "speed_range": [0.5, 2.0],
+        }
+    ]
     service.voice_ids = ["af_heart", "am_adam"]
     service.get_voices.return_value = [
         {
