@@ -337,6 +337,7 @@ class STTService:
         model: str | None = None,
         word_timestamps: bool | None = None,
         vad: bool | None = None,
+        temperature: float | None = None,
     ) -> dict:
         """Transcribe audio bytes to text.
 
@@ -346,6 +347,12 @@ class STTService:
             model: Optional model id; must be mounted locally.
             word_timestamps: Emit ``words`` per segment (defaults to the deployment setting).
             vad: Override voice-activity detection for this request.
+            temperature: Optional decoding temperature. ``None`` keeps faster-whisper's
+                default fallback ladder (greedy, then sampled retries at 0.2-1.0), which
+                is right for a live request and wrong for a measurement: on garbage
+                audio the fallback samples, so two identical inputs can transcribe
+                differently. The evaluation harness passes ``0.0`` to make round-trip
+                WER reproducible.
 
         Returns:
             Dict with keys: text, language, language_confidence,
@@ -357,7 +364,9 @@ class STTService:
             portion. ``vad_failed`` marks a detector that could not run, in which
             case the original audio was transcribed.
         """
-        with self._transcription(audio_bytes, language, model, word_timestamps, vad) as run:
+        with self._transcription(
+            audio_bytes, language, model, word_timestamps, vad, temperature
+        ) as run:
             segments: list[dict] = []
             text_parts: list[str] = []
             for payload in run:
@@ -374,6 +383,7 @@ class STTService:
         model: str | None = None,
         word_timestamps: bool | None = None,
         vad: bool | None = None,
+        temperature: float | None = None,
     ) -> Iterator[dict]:
         """Yield one dict per segment as the decoder produces it.
 
@@ -381,7 +391,9 @@ class STTService:
         when requested). The temporary audio file is removed when the generator is
         exhausted *or* closed — closing is what happens on a client disconnect.
         """
-        with self._transcription(audio_bytes, language, model, word_timestamps, vad) as run:
+        with self._transcription(
+            audio_bytes, language, model, word_timestamps, vad, temperature
+        ) as run:
             accumulated: list[str] = []
             for payload in run:
                 accumulated.append(payload["text"])
@@ -404,6 +416,7 @@ class STTService:
         model: str | None,
         word_timestamps: bool | None,
         vad: bool | None,
+        temperature: float | None = None,
     ) -> Iterator[_TranscriptionRun]:
         """Own the temp file for the whole duration of one transcription.
 
@@ -441,6 +454,9 @@ class STTService:
             }
             if language:
                 kwargs["language"] = language
+            if temperature is not None:
+                # A scalar disables faster-whisper's sampled fallback ladder.
+                kwargs["temperature"] = float(temperature)
 
             raw_segments, info = whisper.transcribe(source, **kwargs)
             logger.debug(

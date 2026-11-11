@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "description": "Routing policy for the Reactory speech platform (SPEECH-007). The policy is data: ordered rules over (language, style, tier, requested rate) with optional capability and measured-score gates. The first rule whose `when` block matches AND whose `require` gates pass wins; a rule that matches but cannot be honoured is recorded as skipped and the search continues. When no rule is usable the request degrades to `default_engine`. Edit this file to change routing; the harness and the service both read it through app.eval.routing.",
+  "default_engine": "kokoro",
+  "fallback_chain": ["kokoro"],
+  "rules": [
+    {
+      "id": "expressive-style",
+      "when": {
+        "style": ["empathetic", "excited", "cheerful", "whisper"]
+      },
+      "engine": "chatterbox",
+      "require": {
+        "supports_requested_style": true
+      },
+      "rationale": "Emotion and paralinguistic delivery need an engine that can express a style; Kokoro reports style as ignored, so an expressive request that lands on Kokoro is silently neutral."
+    },
+    {
+      "id": "native-rate",
+      "when": {
+        "rate_at_least": 1.2
+      },
+      "engine": "kokoro",
+      "require": {
+        "native_rate": true
+      },
+      "rationale": "A rate change of 20 percent or more is a delivery decision. Kokoro renders it natively (its speed parameter changes articulation); engines that only time-stretch would change duration without changing the speaking rate."
+    },
+    {
+      "id": "native-rate-slow",
+      "when": {
+        "rate_at_most": 0.8
+      },
+      "engine": "kokoro",
+      "require": {
+        "native_rate": true
+      },
+      "rationale": "Same reasoning as native-rate, for slowed delivery."
+    },
+    {
+      "id": "long-form-narration",
+      "when": {
+        "style": ["narration", "serious"]
+      },
+      "engine": "kokoro",
+      "require": {
+        "native_rate": true
+      },
+      "rationale": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later."
+    },
+    {
+      "id": "japanese-chinese-coverage",
+      "when": {
+        "language": ["ja", "zh"]
+      },
+      "engine": "kokoro",
+      "rationale": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix)."
+    },
+    {
+      "id": "premium-measured-winner",
+      "when": {
+        "tier": ["premium"]
+      },
+      "engine": "chatterbox",
+      "require": {
+        "beat": {
+          "metric": "wer",
+          "against": "kokoro",
+          "margin": 0.0
+        }
+      },
+      "rationale": "On the premium tier a more expensive engine is allowed only when the harness measured round-trip WER at least as good as the default engine's. No measurement, no promotion."
+    }
+  ]
+}

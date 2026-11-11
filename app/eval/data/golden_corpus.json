@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "description": "Golden corpus for the Reactory speech evaluation harness (SPEECH-007). Representative Reactory sentences: short greetings, long narration, domain vocabulary, numbers, dates, abbreviations and five languages. Every entry is rendered by every configured engine+voice for its language, transcribed by the local STT service and scored for round-trip intelligibility, duration and prosody. `use` is the intended use of the sentence; `max_wer` is the quality target used by `python -m app.eval run --fail-on-wer` (it is a target, not a promise: the multilingual entries currently fail and are the evidence for SPEECH-010).",
+  "metrics_note": "WER is computed over whitespace tokens for space-delimited languages and over characters for Japanese and Chinese; CER is always over characters. Both are computed after Unicode NFKC normalisation, case folding and punctuation removal.",
+  "entries": [
+    {
+      "id": "en-greeting-short",
+      "text": "Hi Werner, how can I help?",
+      "language": "en",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.35
+    },
+    {
+      "id": "en-greeting-calm",
+      "text": "Good morning. Ready when you are.",
+      "language": "en",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.35
+    },
+    {
+      "id": "en-narration-long",
+      "text": "The Reactory platform turns a support ticket into a reviewable change. A planning agent breaks the work into steps, a developer agent writes the code, and a reviewer agent checks it against the ticket. Every step is recorded, so the team can see what happened and why.",
+      "language": "en",
+      "use": "long narration",
+      "tags": ["narration", "long"],
+      "max_wer": 0.35
+    },
+    {
+      "id": "en-domain-vocabulary",
+      "text": "Reactory, GraphQL, Kubernetes, ONNX and FQDN all appear in the platform vocabulary.",
+      "language": "en",
+      "use": "domain vocabulary",
+      "tags": ["domain", "acronyms"],
+      "max_wer": 0.45
+    },
+    {
+      "id": "en-domain-products",
+      "text": "ONNX runtime, faster-whisper and Kokoro-82M run entirely on the CPU, with no GPU and no paid API.",
+      "language": "en",
+      "use": "domain vocabulary",
+      "tags": ["domain", "product-names"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "en-abbreviations",
+      "text": "The API returns JSON over HTTPS, and the CLI reads the SDK, e.g. for the FQDN.",
+      "language": "en",
+      "use": "abbreviations",
+      "tags": ["abbreviations"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "en-numbers",
+      "text": "Your invoice totals 1,284.50 rand for 12 seats, with a 7.5 percent discount.",
+      "language": "en",
+      "use": "numbers",
+      "tags": ["numbers"],
+      "max_wer": 0.45
+    },
+    {
+      "id": "en-dates",
+      "text": "The sprint ends on 14 March 2027 at 09:30, and the review is on 2027-03-15.",
+      "language": "en",
+      "use": "dates",
+      "tags": ["dates", "numbers"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "en-identifiers",
+      "text": "Ticket SPEECH-007 covers the evaluation harness for Phase 6.",
+      "language": "en",
+      "use": "identifiers",
+      "tags": ["identifiers", "domain"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "en-question-prosody",
+      "text": "Which engine should route an empathetic apology in French?",
+      "language": "en",
+      "use": "question",
+      "tags": ["question", "prosody"],
+      "max_wer": 0.35
+    },
+    {
+      "id": "en-punctuation",
+      "text": "Wait — did you mean the staging cluster, or production?",
+      "language": "en",
+      "use": "punctuation",
+      "tags": ["punctuation"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "fr-greeting-short",
+      "text": "Bonjour Werner, comment puis-je vous aider aujourd'hui ?",
+      "language": "fr",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "fr-narration-long",
+      "text": "La plateforme Reactory transforme un ticket de support en une modification vérifiable, avec une étape de planification, une étape de développement et une étape de revue.",
+      "language": "fr",
+      "use": "long narration",
+      "tags": ["narration", "long"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "fr-numbers",
+      "text": "La facture s'élève à 1 284,50 rands pour 12 licences.",
+      "language": "fr",
+      "use": "numbers",
+      "tags": ["numbers"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "ja-greeting-short",
+      "text": "こんにちは、ワーナーさん。今日はどのようなご用件でしょうか。",
+      "language": "ja",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "ja-narration-long",
+      "text": "リアクトリーは、サポートチケットを確認可能な変更に変換するプラットフォームです。計画、実装、レビューの各段階が記録されます。",
+      "language": "ja",
+      "use": "long narration",
+      "tags": ["narration", "long"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "ja-domain-vocabulary",
+      "text": "GraphQL と Kubernetes と ONNX を、CPU だけで実行できます。",
+      "language": "ja",
+      "use": "domain vocabulary",
+      "tags": ["domain", "acronyms"],
+      "max_wer": 0.6
+    },
+    {
+      "id": "zh-greeting-short",
+      "text": "你好，维尔纳。今天我能帮你做什么？",
+      "language": "zh",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "zh-narration-long",
+      "text": "Reactory 平台把支持工单转换成可以审查的代码变更，每一个步骤都会被记录下来。",
+      "language": "zh",
+      "use": "long narration",
+      "tags": ["narration", "long"],
+      "max_wer": 0.5
+    },
+    {
+      "id": "zh-domain-vocabulary",
+      "text": "GraphQL、Kubernetes 和 ONNX 都可以在 CPU 上运行。",
+      "language": "zh",
+      "use": "domain vocabulary",
+      "tags": ["domain", "acronyms"],
+      "max_wer": 0.6
+    },
+    {
+      "id": "es-greeting-short",
+      "text": "Hola Werner, ¿en qué puedo ayudarte hoy?",
+      "language": "es",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "es-narration-long",
+      "text": "La plataforma Reactory convierte un ticket de soporte en un cambio revisable, paso a paso, con cada decisión registrada.",
+      "language": "es",
+      "use": "long narration",
+      "tags": ["narration", "long"],
+      "max_wer": 0.4
+    }
+  ]
+}

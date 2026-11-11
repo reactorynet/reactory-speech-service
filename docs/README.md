@@ -28,6 +28,7 @@ speech service. It is the reference for every ticket raised against this reposit
 | [`adr/0001-open-source-edge-first-speech-platform.md`](adr/0001-open-source-edge-first-speech-platform.md) | The decision that governs every later choice |
 | [`adr/0002-engine-adapter-and-voice-registry.md`](adr/0002-engine-adapter-and-voice-registry.md) | How voices, prosody and engines are modelled |
 | [`architecture/speech-platform.md`](architecture/speech-platform.md) | Target architecture, contracts and capability matrix |
+| [`architecture/evaluation-harness.md`](architecture/evaluation-harness.md) | Offline evaluation harness, golden corpus, baseline and routing policy |
 | [`roadmap/voice-expression-roadmap.md`](roadmap/voice-expression-roadmap.md) | Phased plan and per-ticket scope |
 | [`voices/kokoro-voice-catalogue.md`](voices/kokoro-voice-catalogue.md) | The 54 shipped voices and how to design new ones |
 

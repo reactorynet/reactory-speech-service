@@ -39,3 +39,6 @@ htmlcov/
 
 # Synthesis cache (in-process LRU is not persisted; the disk tier is local)
 .cache/
+
+# Evaluation reports (ad-hoc runs; committed baselines live in app/eval/baselines)
+reports/

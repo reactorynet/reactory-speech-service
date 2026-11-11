@@ -1,0 +1,2434 @@
+{
+  "cells": [
+    {
+      "capabilities": {
+        "native_rate": true,
+        "sample_rates": [
+          24000
+        ],
+        "styles": [
+          "neutral"
+        ],
+        "supports_streaming": true
+      },
+      "engine": "kokoro",
+      "entries": [
+        {
+          "cer": 0.1053,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 2,
+            "insertions": 0,
+            "rate": 0.1053,
+            "reference_length": 19,
+            "substitutions": 2
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 6.042,
+          "duration_min_s": 0.882,
+          "duration_ratio": 1.0155,
+          "duration_s": 1.792,
+          "error": null,
+          "expected_duration_s": 1.765,
+          "id": "en-greeting-short",
+          "peak": 0.4373,
+          "peak_memory_mb": 1.77,
+          "rms": 0.0747,
+          "rtf": 0.6759,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 2.6512,
+          "text_digest": "5b5f73516e55",
+          "transcript": "Hi Varner, how can I help?",
+          "use": "short greeting",
+          "wer": 0.1667,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.1667,
+            "reference_length": 6,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 26,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 6.042,
+          "duration_min_s": 0.882,
+          "duration_ratio": 1.0276,
+          "duration_s": 1.813,
+          "error": null,
+          "expected_duration_s": 1.765,
+          "id": "en-greeting-calm",
+          "peak": 0.4415,
+          "peak_memory_mb": 1.67,
+          "rms": 0.079,
+          "rtf": 1.4327,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 1.2657,
+          "text_digest": "8bc7d08bf419",
+          "transcript": "Good morning, ready when you are.",
+          "use": "short greeting",
+          "wer": 0.0,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 6,
+            "substitutions": 0
+          }
+        },
+        {
+          "cer": 0.0046,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.0046,
+            "reference_length": 216,
+            "substitutions": 1
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 40.496,
+          "duration_min_s": 6.912,
+          "duration_ratio": 1.1852,
+          "duration_s": 16.384,
+          "error": null,
+          "expected_duration_s": 13.824,
+          "id": "en-narration-long",
+          "peak": 0.6345,
+          "peak_memory_mb": 8.39,
+          "rms": 0.0781,
+          "rtf": 1.8286,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 8.9601,
+          "text_digest": "3fcd64298c69",
+          "transcript": "The Reactary platform turns a support ticket into a reviewable change. A planning agent breaks the work into steps, a developer agent writes the code, and a reviewer agent checks it against the ticket. Every step is recorded so the team can see what happened and why.",
+          "use": "long narration",
+          "wer": 0.0213,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.0213,
+            "reference_length": 47,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0735,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 5,
+            "insertions": 4,
+            "rate": 0.0735,
+            "reference_length": 68,
+            "substitutions": 1
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 11.084,
+          "duration_min_s": 1.765,
+          "duration_ratio": 1.9403,
+          "duration_s": 6.848,
+          "error": null,
+          "expected_duration_s": 3.529,
+          "id": "en-domain-vocabulary",
+          "peak": 0.5505,
+          "peak_memory_mb": 4.04,
+          "rms": 0.0757,
+          "rtf": 1.5715,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 4.3575,
+          "text_digest": "f304e664717c",
+          "transcript": "Reactory, GraphQL, Kubernetes, On-Roman 9, and FQDN all appear in the platform vocabulary.",
+          "use": "domain vocabulary",
+          "wer": 0.25,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 3,
+            "insertions": 2,
+            "rate": 0.25,
+            "reference_length": 12,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0921,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 7,
+            "insertions": 4,
+            "rate": 0.0921,
+            "reference_length": 76,
+            "substitutions": 3
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 16.966,
+          "duration_min_s": 2.794,
+          "duration_ratio": 1.6874,
+          "duration_s": 9.429,
+          "error": null,
+          "expected_duration_s": 5.588,
+          "id": "en-domain-products",
+          "peak": 0.7122,
+          "peak_memory_mb": 5.21,
+          "rms": 0.0742,
+          "rtf": 1.7437,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 5.4076,
+          "text_digest": "f60cf8db9eb9",
+          "transcript": "On-Roman 9 runtime, faster whisper and Kakoro 82M run entirely on the CPU with no GPU and no paid EPI.",
+          "use": "domain vocabulary",
+          "wer": 0.2632,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 5,
+            "insertions": 2,
+            "rate": 0.2632,
+            "reference_length": 19,
+            "substitutions": 3
+          }
+        },
+        {
+          "cer": 0.1724,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 10,
+            "insertions": 8,
+            "rate": 0.1724,
+            "reference_length": 58,
+            "substitutions": 2
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 15.286,
+          "duration_min_s": 2.5,
+          "duration_ratio": 1.6853,
+          "duration_s": 8.427,
+          "error": null,
+          "expected_duration_s": 5.0,
+          "id": "en-abbreviations",
+          "peak": 0.8148,
+          "peak_memory_mb": 4.72,
+          "rms": 0.0751,
+          "rtf": 1.754,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 4.8042,
+          "text_digest": "1aaeb90a9e51",
+          "transcript": "The EPI returns JSON over HTTPS, and the CLI reads the SDK, for example, for the FQDN.",
+          "use": "abbreviations",
+          "wer": 0.1765,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 3,
+            "insertions": 0,
+            "rate": 0.1765,
+            "reference_length": 17,
+            "substitutions": 3
+          }
+        },
+        {
+          "cer": 0.1186,
+          "cer_counts": {
+            "deletions": 7,
+            "errors": 7,
+            "insertions": 0,
+            "rate": 0.1186,
+            "reference_length": 59,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 14.445,
+          "duration_min_s": 2.353,
+          "duration_ratio": 1.496,
+          "duration_s": 7.04,
+          "error": null,
+          "expected_duration_s": 4.706,
+          "id": "en-numbers",
+          "peak": 0.6512,
+          "peak_memory_mb": 4.08,
+          "rms": 0.0784,
+          "rtf": 1.8216,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 3.8648,
+          "text_digest": "2a52761d76cb",
+          "transcript": "Your invoice totals 1-284-50-rand for 12 seats with a 7-5% discount.",
+          "use": "numbers",
+          "wer": 0.0625,
+          "wer_counts": {
+            "deletions": 1,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.0625,
+            "reference_length": 16,
+            "substitutions": 0
+          }
+        },
+        {
+          "cer": 0.0,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 56,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 16.126,
+          "duration_min_s": 2.647,
+          "duration_ratio": 1.898,
+          "duration_s": 10.048,
+          "error": null,
+          "expected_duration_s": 5.294,
+          "id": "en-dates",
+          "peak": 0.8937,
+          "peak_memory_mb": 5.47,
+          "rms": 0.0761,
+          "rtf": 1.8237,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 5.5096,
+          "text_digest": "9189a87a29d8",
+          "transcript": "The sprint ends on 14 March, 2027 at 0.9. 30, and the review is on 2027-03-15.",
+          "use": "dates",
+          "wer": 0.1111,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 2,
+            "insertions": 1,
+            "rate": 0.1111,
+            "reference_length": 18,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 50,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 9.403,
+          "duration_min_s": 1.471,
+          "duration_ratio": 1.6465,
+          "duration_s": 4.843,
+          "error": null,
+          "expected_duration_s": 2.941,
+          "id": "en-identifiers",
+          "peak": 0.6653,
+          "peak_memory_mb": 3.08,
+          "rms": 0.074,
+          "rtf": 1.6949,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 2.8572,
+          "text_digest": "121fd9a20eef",
+          "transcript": "Ticket Speech 007 covers the evaluation harness for Phase 6.",
+          "use": "identifiers",
+          "wer": 0.0,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 10,
+            "substitutions": 0
+          }
+        },
+        {
+          "cer": 0.0,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 49,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 8.563,
+          "duration_min_s": 1.324,
+          "duration_ratio": 1.1686,
+          "duration_s": 3.093,
+          "error": null,
+          "expected_duration_s": 2.647,
+          "id": "en-question-prosody",
+          "peak": 0.6346,
+          "peak_memory_mb": 2.27,
+          "rms": 0.0719,
+          "rtf": 1.548,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 1.9982,
+          "text_digest": "b249ddb7807d",
+          "transcript": "which engine should route an empathetic apology in French.",
+          "use": "question",
+          "wer": 0.0,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 9,
+            "substitutions": 0
+          }
+        },
+        {
+          "cer": 0.0,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 43,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 8.563,
+          "duration_min_s": 1.324,
+          "duration_ratio": 1.1283,
+          "duration_s": 2.987,
+          "error": null,
+          "expected_duration_s": 2.647,
+          "id": "en-punctuation",
+          "peak": 0.5292,
+          "peak_memory_mb": 2.23,
+          "rms": 0.0798,
+          "rtf": 1.503,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 1.9872,
+          "text_digest": "d27029eaf45a",
+          "transcript": "Wait, did you mean the staging cluster or production?",
+          "use": "punctuation",
+          "wer": 0.0,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 0,
+            "insertions": 0,
+            "rate": 0.0,
+            "reference_length": 9,
+            "substitutions": 0
+          }
+        }
+      ],
+      "language": "en",
+      "prosody": {
+        "adherence": 1.0557,
+        "applied": {
+          "rate": 1.5
+        },
+        "base_duration_s": 16.384,
+        "checks": [],
+        "entry": "en-narration-long",
+        "ignored": [],
+        "measured_rate": 1.5835,
+        "requested_duration_s": 10.3467,
+        "requested_rate": 1.5
+      },
+      "speaker_consistency": {
+        "checks": [],
+        "embedder": "spectral-mel-stats-v1",
+        "entry": "en-narration-long",
+        "error": null,
+        "mean": 1.0,
+        "min": 1.0,
+        "renders": 2
+      },
+      "streaming": {
+        "checks": [],
+        "chunk_duration_s": 4.2453,
+        "entry": "en-narration-long",
+        "sample_rate": 24000,
+        "ttfa_s": 2.5676
+      },
+      "summary": {
+        "cer_mean": 0.0515,
+        "duration_ratio_mean": 1.4435,
+        "entries": 11.0,
+        "errors": 0.0,
+        "integrity_failures": 0.0,
+        "peak_memory_mb_max": 8.3937,
+        "quality_failures": 0.0,
+        "rtf_mean": 1.5816,
+        "wer_mean": 0.0956
+      },
+      "voice": "af_heart"
+    },
+    {
+      "capabilities": {
+        "native_rate": true,
+        "sample_rates": [
+          24000
+        ],
+        "styles": [
+          "neutral"
+        ],
+        "supports_streaming": true
+      },
+      "engine": "kokoro",
+      "entries": [
+        {
+          "cer": 0.0645,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 2,
+            "insertions": 0,
+            "rate": 0.0645,
+            "reference_length": 31,
+            "substitutions": 2
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 6.882,
+          "duration_min_s": 1.029,
+          "duration_ratio": 1.0984,
+          "duration_s": 2.261,
+          "error": null,
+          "expected_duration_s": 2.059,
+          "id": "es-greeting-short",
+          "peak": 0.6593,
+          "peak_memory_mb": 1.81,
+          "rms": 0.0749,
+          "rtf": 0.8113,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 2.7871,
+          "text_digest": "52e3e247c45e",
+          "transcript": "Hola Barner, en qué puedo ayudarte hoy.",
+          "use": "short greeting",
+          "wer": 0.1429,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.1429,
+            "reference_length": 7,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0202,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 2,
+            "insertions": 0,
+            "rate": 0.0202,
+            "reference_length": 99,
+            "substitutions": 2
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 16.966,
+          "duration_min_s": 2.794,
+          "duration_ratio": 1.2712,
+          "duration_s": 7.104,
+          "error": null,
+          "expected_duration_s": 5.588,
+          "id": "es-narration-long",
+          "peak": 0.7115,
+          "peak_memory_mb": 3.94,
+          "rms": 0.0686,
+          "rtf": 1.6651,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 4.2664,
+          "text_digest": "381ca287a36c",
+          "transcript": "La plataforma reactory convierte un tiquet de soporte en un cambio revisable, paso a paso, con cada decisión registrada.",
+          "use": "long narration",
+          "wer": 0.0526,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.0526,
+            "reference_length": 19,
+            "substitutions": 1
+          }
+        }
+      ],
+      "language": "es",
+      "prosody": {
+        "adherence": 1.0777,
+        "applied": {
+          "rate": 1.5
+        },
+        "base_duration_s": 7.104,
+        "checks": [],
+        "entry": "es-narration-long",
+        "ignored": [],
+        "measured_rate": 1.6165,
+        "requested_duration_s": 4.3947,
+        "requested_rate": 1.5
+      },
+      "speaker_consistency": {
+        "checks": [],
+        "embedder": "spectral-mel-stats-v1",
+        "entry": "es-narration-long",
+        "error": null,
+        "mean": 1.0,
+        "min": 1.0,
+        "renders": 2
+      },
+      "streaming": {
+        "checks": [],
+        "chunk_duration_s": 7.104,
+        "entry": "es-narration-long",
+        "sample_rate": 24000,
+        "ttfa_s": 4.5664
+      },
+      "summary": {
+        "cer_mean": 0.0424,
+        "duration_ratio_mean": 1.1848,
+        "entries": 2.0,
+        "errors": 0.0,
+        "integrity_failures": 0.0,
+        "peak_memory_mb_max": 3.9399,
+        "quality_failures": 0.0,
+        "rtf_mean": 1.2382,
+        "wer_mean": 0.0977
+      },
+      "voice": "ef_dora"
+    },
+    {
+      "capabilities": {
+        "native_rate": true,
+        "sample_rates": [
+          24000
+        ],
+        "styles": [
+          "neutral"
+        ],
+        "supports_streaming": true
+      },
+      "engine": "kokoro",
+      "entries": [
+        {
+          "cer": 0.0444,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 2,
+            "insertions": 0,
+            "rate": 0.0444,
+            "reference_length": 45,
+            "substitutions": 2
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 8.563,
+          "duration_min_s": 1.324,
+          "duration_ratio": 1.088,
+          "duration_s": 2.88,
+          "error": null,
+          "expected_duration_s": 2.647,
+          "id": "fr-greeting-short",
+          "peak": 0.8759,
+          "peak_memory_mb": 2.26,
+          "rms": 0.117,
+          "rtf": 0.5806,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 4.9607,
+          "text_digest": "292fd214065d",
+          "transcript": "Bonjour Varner, comment puis-je vous aider aujourd'hui ?",
+          "use": "short greeting",
+          "wer": 0.1111,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 1,
+            "insertions": 0,
+            "rate": 0.1111,
+            "reference_length": 9,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0355,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 5,
+            "insertions": 5,
+            "rate": 0.0355,
+            "reference_length": 141,
+            "substitutions": 0
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 22.849,
+          "duration_min_s": 3.824,
+          "duration_ratio": 1.3837,
+          "duration_s": 10.581,
+          "error": null,
+          "expected_duration_s": 7.647,
+          "id": "fr-narration-long",
+          "peak": 0.7482,
+          "peak_memory_mb": 5.64,
+          "rms": 0.1025,
+          "rtf": 1.8159,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 5.8271,
+          "text_digest": "62236fa73bd9",
+          "transcript": "La plateforme, InReactory, Flo transforme un ticket de support en une modification vérifiable avec une étape de planification, une étape de développement et une étape de revue.",
+          "use": "long narration",
+          "wer": 0.0769,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 2,
+            "insertions": 1,
+            "rate": 0.0769,
+            "reference_length": 26,
+            "substitutions": 1
+          }
+        },
+        {
+          "cer": 0.0488,
+          "cer_counts": {
+            "deletions": 1,
+            "errors": 2,
+            "insertions": 0,
+            "rate": 0.0488,
+            "reference_length": 41,
+            "substitutions": 1
+          },
+          "channels": 1,
+          "checks": [],
+          "duration_max_s": 11.084,
+          "duration_min_s": 1.765,
+          "duration_ratio": 1.3902,
+          "duration_s": 4.907,
+          "error": null,
+          "expected_duration_s": 3.529,
+          "id": "fr-numbers",
+          "peak": 0.7528,
+          "peak_memory_mb": 3.08,
+          "rms": 0.1068,
+          "rtf": 1.696,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 2.8931,
+          "text_digest": "7791cf746202",
+          "transcript": "La facture s'élève à 1284, 50 rond pour 12 licences.",
+          "use": "numbers",
+          "wer": 0.25,
+          "wer_counts": {
+            "deletions": 1,
+            "errors": 3,
+            "insertions": 0,
+            "rate": 0.25,
+            "reference_length": 12,
+            "substitutions": 2
+          }
+        }
+      ],
+      "language": "fr",
+      "prosody": {
+        "adherence": 1.0632,
+        "applied": {
+          "rate": 1.5
+        },
+        "base_duration_s": 10.5813,
+        "checks": [],
+        "entry": "fr-narration-long",
+        "ignored": [],
+        "measured_rate": 1.5949,
+        "requested_duration_s": 6.6347,
+        "requested_rate": 1.5
+      },
+      "speaker_consistency": {
+        "checks": [],
+        "embedder": "spectral-mel-stats-v1",
+        "entry": "fr-narration-long",
+        "error": null,
+        "mean": 1.0,
+        "min": 1.0,
+        "renders": 2
+      },
+      "streaming": {
+        "checks": [],
+        "chunk_duration_s": 10.5813,
+        "entry": "fr-narration-long",
+        "sample_rate": 24000,
+        "ttfa_s": 5.6612
+      },
+      "summary": {
+        "cer_mean": 0.0429,
+        "duration_ratio_mean": 1.2873,
+        "entries": 3.0,
+        "errors": 0.0,
+        "integrity_failures": 0.0,
+        "peak_memory_mb_max": 5.6351,
+        "quality_failures": 0.0,
+        "rtf_mean": 1.3641,
+        "wer_mean": 0.146
+      },
+      "voice": "ff_siwis"
+    },
+    {
+      "capabilities": {
+        "native_rate": true,
+        "sample_rates": [
+          24000
+        ],
+        "styles": [
+          "neutral"
+        ],
+        "supports_streaming": true
+      },
+      "engine": "kokoro",
+      "entries": [
+        {
+          "cer": 3.6667,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 99,
+            "insertions": 80,
+            "rate": 3.6667,
+            "reference_length": 27,
+            "substitutions": 19
+          },
+          "channels": 1,
+          "checks": [
+            "wer_threshold"
+          ],
+          "duration_max_s": 15.835,
+          "duration_min_s": 2.596,
+          "duration_ratio": 2.6788,
+          "duration_s": 13.909,
+          "error": null,
+          "expected_duration_s": 5.192,
+          "id": "ja-greeting-short",
+          "peak": 0.6054,
+          "peak_memory_mb": 7.29,
+          "rms": 0.1013,
+          "rtf": 1.5099,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 9.2118,
+          "text_digest": "f5b1ef18a3f5",
+          "transcript": "コンヒーチーホヌス エンチアイニーズやレッド エンチアイニーズやレッド とエンチアープニーズやレッドのような コエンチアープニーズやレッド エンチアイニーズやレッド エンチアイニーズやレッド エンチアープニーズやレッド しよううく",
+          "use": "short greeting",
+          "wer": 3.6667,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 99,
+            "insertions": 80,
+            "rate": 3.6667,
+            "reference_length": 27,
+            "substitutions": 19
+          }
+        },
+        {
+          "cer": null,
+          "cer_counts": null,
+          "channels": null,
+          "checks": [
+            "synthesis_error"
+          ],
+          "duration_max_s": null,
+          "duration_min_s": null,
+          "duration_ratio": null,
+          "duration_s": null,
+          "error": "IndexError: index 510 is out of bounds for axis 0 with size 510",
+          "expected_duration_s": 10.962,
+          "id": "ja-narration-long",
+          "peak": null,
+          "peak_memory_mb": null,
+          "rms": null,
+          "rtf": null,
+          "sample_rate": null,
+          "silent": null,
+          "status": "error",
+          "synthesis_s": null,
+          "text_digest": "177ca2ab564d",
+          "transcript": null,
+          "use": "long narration",
+          "wer": null,
+          "wer_counts": null
+        },
+        {
+          "cer": 1.7222,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 62,
+            "insertions": 51,
+            "rate": 1.7222,
+            "reference_length": 36,
+            "substitutions": 11
+          },
+          "channels": 1,
+          "checks": [
+            "wer_threshold"
+          ],
+          "duration_max_s": 20.78,
+          "duration_min_s": 3.462,
+          "duration_ratio": 2.4713,
+          "duration_s": 17.109,
+          "error": null,
+          "expected_duration_s": 6.923,
+          "id": "ja-domain-vocabulary",
+          "peak": 0.6191,
+          "peak_memory_mb": 8.75,
+          "rms": 0.0998,
+          "rtf": 1.799,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 9.5104,
+          "text_digest": "7c91b5f32934",
+          "transcript": "NGO APHQLやとNKUBE or NETESや 東海の上にXRをNCPUやと NJAPニーズやLETけて NJAPニーズやLET NシァイニーズやLETて NJAPニーズやLETけます",
+          "use": "domain vocabulary",
+          "wer": 1.7222,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 62,
+            "insertions": 51,
+            "rate": 1.7222,
+            "reference_length": 36,
+            "substitutions": 11
+          }
+        }
+      ],
+      "language": "ja",
+      "prosody": {
+        "adherence": 1.0758,
+        "applied": {
+          "rate": 1.5
+        },
+        "base_duration_s": 17.1093,
+        "checks": [],
+        "entry": "ja-domain-vocabulary",
+        "ignored": [],
+        "measured_rate": 1.6137,
+        "requested_duration_s": 10.6027,
+        "requested_rate": 1.5
+      },
+      "speaker_consistency": {
+        "checks": [],
+        "embedder": "spectral-mel-stats-v1",
+        "entry": "ja-domain-vocabulary",
+        "error": null,
+        "mean": 1.0,
+        "min": 1.0,
+        "renders": 2
+      },
+      "streaming": {
+        "checks": [],
+        "chunk_duration_s": 17.1093,
+        "entry": "ja-domain-vocabulary",
+        "sample_rate": 24000,
+        "ttfa_s": 9.5235
+      },
+      "summary": {
+        "cer_mean": 2.6944,
+        "duration_ratio_mean": 2.5751,
+        "entries": 3.0,
+        "errors": 1.0,
+        "integrity_failures": 1.0,
+        "peak_memory_mb_max": 8.7545,
+        "quality_failures": 2.0,
+        "rtf_mean": 1.6545,
+        "wer_mean": 2.6944
+      },
+      "voice": "jf_alpha"
+    },
+    {
+      "capabilities": {
+        "native_rate": true,
+        "sample_rates": [
+          24000
+        ],
+        "styles": [
+          "neutral"
+        ],
+        "supports_streaming": true
+      },
+      "engine": "kokoro",
+      "entries": [
+        {
+          "cer": 0.5714,
+          "cer_counts": {
+            "deletions": 0,
+            "errors": 8,
+            "insertions": 0,
+            "rate": 0.5714,
+            "reference_length": 14,
+            "substitutions": 8
+          },
+          "channels": 1,
+          "checks": [
+            "wer_threshold"
+          ],
+          "duration_max_s": 8.692,
+          "duration_min_s": 1.346,
+          "duration_ratio": 1.355,
+          "duration_s": 3.648,
+          "error": null,
+          "expected_duration_s": 2.692,
+          "id": "zh-greeting-short",
+          "peak": 0.5949,
+          "peak_memory_mb": 2.96,
+          "rms": 0.1062,
+          "rtf": 0.7732,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 4.7179,
+          "text_digest": "98804ef0a0a6",
+          "transcript": "妳要為了那今天我能幫妳做什麼",
+          "use": "short greeting",
+          "wer": 0.5714,
+          "wer_counts": {
+            "deletions": 0,
+            "errors": 8,
+            "insertions": 0,
+            "rate": 0.5714,
+            "reference_length": 14,
+            "substitutions": 8
+          }
+        },
+        {
+          "cer": 1.0513,
+          "cer_counts": {
+            "deletions": 2,
+            "errors": 41,
+            "insertions": 9,
+            "rate": 1.0513,
+            "reference_length": 39,
+            "substitutions": 30
+          },
+          "channels": 1,
+          "checks": [
+            "wer_threshold"
+          ],
+          "duration_max_s": 22.429,
+          "duration_min_s": 3.75,
+          "duration_ratio": 1.3938,
+          "duration_s": 10.453,
+          "error": null,
+          "expected_duration_s": 7.5,
+          "id": "zh-narration-long",
+          "peak": 0.6198,
+          "peak_memory_mb": 5.97,
+          "rms": 0.1025,
+          "rtf": 1.1444,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 9.134,
+          "text_digest": "176366ce42c9",
+          "transcript": "在瑞雅之壹晨平台要保持壹次 而攻彈子萬五萬子很虧壹身子 哈德代碼變更美爺郭捕子 歐多五位被齊錄下來",
+          "use": "long narration",
+          "wer": 1.0513,
+          "wer_counts": {
+            "deletions": 2,
+            "errors": 41,
+            "insertions": 9,
+            "rate": 1.0513,
+            "reference_length": 39,
+            "substitutions": 30
+          }
+        },
+        {
+          "cer": 1.25,
+          "cer_counts": {
+            "deletions": 1,
+            "errors": 40,
+            "insertions": 28,
+            "rate": 1.25,
+            "reference_length": 32,
+            "substitutions": 11
+          },
+          "channels": 1,
+          "checks": [
+            "wer_threshold"
+          ],
+          "duration_max_s": 18.582,
+          "duration_min_s": 3.077,
+          "duration_ratio": 1.2341,
+          "duration_s": 7.595,
+          "error": null,
+          "expected_duration_s": 6.154,
+          "id": "zh-domain-vocabulary",
+          "peak": 0.5674,
+          "peak_memory_mb": 4.64,
+          "rms": 0.1025,
+          "rtf": 1.2225,
+          "sample_rate": 24000,
+          "silent": false,
+          "status": "ok",
+          "synthesis_s": 6.2123,
+          "text_digest": "9fe789c6490f",
+          "transcript": "N-graph-q-elgin,N-gu-binadis, 之-wo-n-roman-nangin, 都可以在N-c-b-yuzinx on-yunxing.",
+          "use": "domain vocabulary",
+          "wer": 1.25,
+          "wer_counts": {
+            "deletions": 1,
+            "errors": 40,
+            "insertions": 28,
+            "rate": 1.25,
+            "reference_length": 32,
+            "substitutions": 11
+          }
+        }
+      ],
+      "language": "zh",
+      "prosody": {
+        "adherence": 1.0925,
+        "applied": {
+          "rate": 1.5
+        },
+        "base_duration_s": 10.4533,
+        "checks": [],
+        "entry": "zh-narration-long",
+        "ignored": [],
+        "measured_rate": 1.6388,
+        "requested_duration_s": 6.3787,
+        "requested_rate": 1.5
+      },
+      "speaker_consistency": {
+        "checks": [],
+        "embedder": "spectral-mel-stats-v1",
+        "entry": "zh-narration-long",
+        "error": null,
+        "mean": 1.0,
+        "min": 1.0,
+        "renders": 2
+      },
+      "streaming": {
+        "checks": [],
+        "chunk_duration_s": 10.4533,
+        "entry": "zh-narration-long",
+        "sample_rate": 24000,
+        "ttfa_s": 5.9731
+      },
+      "summary": {
+        "cer_mean": 0.9576,
+        "duration_ratio_mean": 1.3276,
+        "entries": 3.0,
+        "errors": 0.0,
+        "integrity_failures": 0.0,
+        "peak_memory_mb_max": 5.9704,
+        "quality_failures": 3.0,
+        "rtf_mean": 1.0467,
+        "wer_mean": 0.9576
+      },
+      "voice": "zf_xiaobei"
+    }
+  ],
+  "failures": [
+    {
+      "check": "wer_threshold",
+      "duration_s": 13.909,
+      "engine": "kokoro",
+      "entry": "ja-greeting-short",
+      "error": null,
+      "sample_rate": 24000,
+      "severity": "quality",
+      "voice": "jf_alpha",
+      "wer": 3.6667
+    },
+    {
+      "check": "synthesis_error",
+      "duration_s": null,
+      "engine": "kokoro",
+      "entry": "ja-narration-long",
+      "error": "IndexError: index 510 is out of bounds for axis 0 with size 510",
+      "sample_rate": null,
+      "severity": "integrity",
+      "voice": "jf_alpha",
+      "wer": null
+    },
+    {
+      "check": "wer_threshold",
+      "duration_s": 17.109,
+      "engine": "kokoro",
+      "entry": "ja-domain-vocabulary",
+      "error": null,
+      "sample_rate": 24000,
+      "severity": "quality",
+      "voice": "jf_alpha",
+      "wer": 1.7222
+    },
+    {
+      "check": "wer_threshold",
+      "duration_s": 3.648,
+      "engine": "kokoro",
+      "entry": "zh-greeting-short",
+      "error": null,
+      "sample_rate": 24000,
+      "severity": "quality",
+      "voice": "zf_xiaobei",
+      "wer": 0.5714
+    },
+    {
+      "check": "wer_threshold",
+      "duration_s": 10.453,
+      "engine": "kokoro",
+      "entry": "zh-narration-long",
+      "error": null,
+      "sample_rate": 24000,
+      "severity": "quality",
+      "voice": "zf_xiaobei",
+      "wer": 1.0513
+    },
+    {
+      "check": "wer_threshold",
+      "duration_s": 7.595,
+      "engine": "kokoro",
+      "entry": "zh-domain-vocabulary",
+      "error": null,
+      "sample_rate": 24000,
+      "severity": "quality",
+      "voice": "zf_xiaobei",
+      "wer": 1.25
+    }
+  ],
+  "generated_at": null,
+  "meta": {
+    "config": {
+      "cross_language": false,
+      "fail_on_wer": false,
+      "languages": null,
+      "memory_mode": "tracemalloc",
+      "probe_rate": 1.5,
+      "repeats": 2,
+      "speaker_floor": 0.5,
+      "voices": "default"
+    },
+    "corpus": {
+      "digest": "sha256:bbcac4b495200db3e12b571d2499f5684435e3342145a4620f61a673dea65ec4",
+      "entries": 22,
+      "languages": [
+        "en",
+        "es",
+        "fr",
+        "ja",
+        "zh"
+      ],
+      "path": "/Users/wernerw/Projects/reactory/reactory-worktrees/ai-6af2b25d8537a4b9152895d5/app/eval/data/golden_corpus.json",
+      "schema_version": 1,
+      "uses": [
+        "abbreviations",
+        "dates",
+        "domain vocabulary",
+        "identifiers",
+        "long narration",
+        "numbers",
+        "punctuation",
+        "question",
+        "short greeting"
+      ]
+    },
+    "engines": [
+      {
+        "attribution": "Kokoro-82M v1.0",
+        "id": "kokoro",
+        "license": "Apache-2.0",
+        "name": "Kokoro-82M (ONNX)",
+        "native_rate": true,
+        "sample_rates": [
+          24000
+        ],
+        "styles": [
+          "neutral"
+        ],
+        "supports_streaming": true
+      }
+    ],
+    "environment": {
+      "cpu_count": 8,
+      "kokoro_default_speed": 1.0,
+      "kokoro_default_voice": "af_heart",
+      "models": {
+        "kokoro-v1.0.onnx": 325532387,
+        "voices-v1.0.bin": 28214398
+      },
+      "phonetic_preprocessing": true,
+      "platform": "darwin",
+      "python": "3.13.2"
+    },
+    "metric_definitions": {
+      "cer": "Character error rate of the transcript against the source, punctuation removed.",
+      "duration_ratio": "duration_s divided by the nominal duration of the sentence at rate 1.0.",
+      "duration_s": "Audio duration measured from the WAV frame count and header sample rate.",
+      "peak_memory_mb": "Peak Python heap allocation during one render (tracemalloc). Best effort: native allocations inside ONNX Runtime are not attributed. With --memory-mode rss this is the process high-water RSS instead, which is not per-render.",
+      "prosody_adherence": "measured_rate / requested_rate, where measured_rate = base_duration / requested_duration. 1.0 means the engine honoured the rate exactly; ~0.67 means a 1.5x request was ignored.",
+      "rtf": "Real-time factor: audio seconds produced per wall-clock synthesis second. Higher is faster; 1.0 is real time.",
+      "speaker_consistency_mean": "Mean pairwise cosine similarity between the speaker embeddings of repeated renders of the same voice and text. 1.0 means a perfectly stable voice.",
+      "speaker_consistency_min": "Worst pairwise cosine similarity across the repeated renders.",
+      "ttfa_s": "Time to the first streamed audio chunk, measured on the streaming path. Kokoro streams a sentence at a time, so this is the latency to the first sentence, not to the first word.",
+      "wer": "Word error rate of the local STT transcript against the corpus sentence, after Unicode NFKC normalisation, case folding and punctuation removal. For Japanese/Chinese the tokens are characters, so WER equals a character-level rate there; prefer `cer`."
+    },
+    "speaker_embedder": {
+      "id": "spectral-mel-stats-v1",
+      "note": "log-mel statistics over repeated renders; a stability proxy for one engine/voice, not a biometric speaker-verification model"
+    },
+    "tolerances": {
+      "cer": {
+        "mode": "absolute",
+        "value": 0.02
+      },
+      "cer_mean": {
+        "mode": "absolute",
+        "value": 0.02
+      },
+      "duration_ratio": {
+        "mode": "relative",
+        "value": 0.08
+      },
+      "duration_s": {
+        "mode": "relative",
+        "value": 0.05
+      },
+      "peak_memory_mb": {
+        "mode": "relative",
+        "value": 0.15
+      },
+      "peak_memory_mb_max": {
+        "mode": "relative",
+        "value": 0.15
+      },
+      "prosody_adherence": {
+        "mode": "relative",
+        "value": 0.05
+      },
+      "rtf": {
+        "mode": "relative",
+        "value": 0.15
+      },
+      "speaker_consistency_mean": {
+        "mode": "absolute",
+        "value": 0.02
+      },
+      "speaker_consistency_min": {
+        "mode": "absolute",
+        "value": 0.02
+      },
+      "ttfa_s": {
+        "mode": "relative",
+        "value": 0.2
+      },
+      "wer": {
+        "mode": "absolute",
+        "value": 0.02
+      },
+      "wer_mean": {
+        "mode": "absolute",
+        "value": 0.02
+      }
+    },
+    "transcriber": {
+      "available": true,
+      "description": "local faster-whisper (CTranslate2), local_files_only, vad disabled",
+      "enabled": true,
+      "model": "base"
+    }
+  },
+  "routing": {
+    "decisions": [
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no rule matched; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "en",
+        "rate": null,
+        "reason": "no rule matched; degraded to the default engine",
+        "rule": "default",
+        "style": "neutral",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "en",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "neutral",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "en",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "en",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "en",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "empathetic",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "en",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "empathetic",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no rule matched; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "es",
+        "rate": null,
+        "reason": "no rule matched; degraded to the default engine",
+        "rule": "default",
+        "style": "neutral",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "es",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "neutral",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "es",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "es",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "es",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "empathetic",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "es",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "empathetic",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no rule matched; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "fr",
+        "rate": null,
+        "reason": "no rule matched; degraded to the default engine",
+        "rule": "default",
+        "style": "neutral",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "fr",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "neutral",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "fr",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "fr",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "fr",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "empathetic",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "japanese-chinese-coverage"
+          },
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "premium-measured-winner"
+          },
+          {
+            "outcome": "selected",
+            "reason": "no matching rule could be honoured; degraded to the default engine",
+            "rule": "default"
+          }
+        ],
+        "degraded": true,
+        "engine": "kokoro",
+        "language": "fr",
+        "rate": null,
+        "reason": "no matching rule could be honoured; degraded to the default engine",
+        "rule": "default",
+        "style": "empathetic",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "ja",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "neutral",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "ja",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "neutral",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "ja",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "ja",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "ja",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "empathetic",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "ja",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "empathetic",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "zh",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "neutral",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "zh",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "neutral",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "zh",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "no-match",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "selected",
+            "rule": "long-form-narration"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "zh",
+        "rate": null,
+        "reason": "Steady narration is the default edge profile's strongest case and the cheapest to run; the rule exists so the choice is data rather than folklore, and can be replaced by a measured winner later.",
+        "rule": "long-form-narration",
+        "style": "narration",
+        "tier": "premium"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "zh",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "empathetic",
+        "tier": "standard"
+      },
+      {
+        "considered": [
+          {
+            "outcome": "skipped",
+            "reason": "engine 'chatterbox' is not deployed",
+            "rule": "expressive-style"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "native-rate-slow"
+          },
+          {
+            "outcome": "no-match",
+            "rule": "long-form-narration"
+          },
+          {
+            "outcome": "selected",
+            "rule": "japanese-chinese-coverage"
+          }
+        ],
+        "degraded": false,
+        "engine": "kokoro",
+        "language": "zh",
+        "rate": null,
+        "reason": "Kokoro is the only engine shipping Japanese and Chinese voices today. This is a coverage fallback, not a quality claim: the evaluation baseline records how poor that coverage currently is (SPEECH-010 owns the fix).",
+        "rule": "japanese-chinese-coverage",
+        "style": "empathetic",
+        "tier": "premium"
+      }
+    ],
+    "default_engine": "kokoro",
+    "policy": "/Users/wernerw/Projects/reactory/reactory-worktrees/ai-6af2b25d8537a4b9152895d5/app/eval/policies/routing.json"
+  },
+  "schema": "reactory.speech.eval.report/1",
+  "status": {
+    "cells": 5,
+    "entries": 22,
+    "integrity_failures": 1,
+    "passed": false,
+    "quality_failures": 5
+  }
+}
