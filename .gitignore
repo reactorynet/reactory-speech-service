@@ -39,3 +39,6 @@ htmlcov/
 
 # Synthesis cache (in-process LRU is not persisted; the disk tier is local)
 .cache/
+
+# Designed-voice preview WAVs (derived from the recipe and regenerated on demand)
+data/previews/

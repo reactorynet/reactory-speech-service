@@ -15,6 +15,10 @@ Two things are deliberately *not* voice data and stay in code:
 A record carries identity, language, licence, provenance, capability flags and a
 ``style_spec`` describing how to render it.  ``enabled`` is honoured everywhere:
 a disabled record is neither advertised nor synthesised.
+
+Designed voices (blends / base aliases, see :mod:`app.services.designed_voices`)
+live in a second, user-writable registry.  :func:`get_record` consults both so a
+designed voice is indistinguishable from a pack voice to every caller.
 """
 
 from __future__ import annotations
@@ -364,8 +368,28 @@ UNGRADED_VOICE_IDS: tuple[str, ...] = tuple(
 
 
 def get_record(voice_id: str) -> VoiceRecord | None:
-    """Return the registry record for a voice id, or ``None``."""
-    return VOICE_REGISTRY.get(voice_id)
+    """Return the record for a voice id, or ``None``.
+
+    The shipped pack registry is consulted first.  Designed voices (blends and
+    base aliases) live in a separate, user-writable store; they resolve to the
+    same :class:`VoiceRecord` shape so descriptors, filters and engine
+    resolution never need to know which registry a voice came from.  The lookup
+    is defensive: a broken designed-voice store must not hide pack voices.
+    """
+    record = VOICE_REGISTRY.get(voice_id)
+    if record is not None:
+        return record
+    try:
+        from app.services.designed_voices import get_store
+
+        return get_store().get(voice_id)
+    except Exception:  # pragma: no cover - defensive: never break pack voices
+        logger.warning(
+            "Designed-voice registry lookup failed for %r; treating it as unknown.",
+            voice_id,
+            exc_info=True,
+        )
+        return None
 
 
 def default_voice_id(available: Iterable[str] | None = None) -> str:
@@ -384,7 +408,9 @@ def default_voice_id(available: Iterable[str] | None = None) -> str:
     """
     configured = (getattr(settings, "kokoro_default_voice", "") or "").strip()
     if configured:
-        record = VOICE_REGISTRY.get(configured)
+        # ``get_record`` also sees designed voices, so a preset can be configured
+        # as the deployment default without editing the shipped pack registry.
+        record = get_record(configured)
         if record is not None:
             if record.enabled:
                 return record.id
