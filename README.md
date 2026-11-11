@@ -133,8 +133,222 @@ You can customize pronunciation in four ways:
    - SSML: `'Welcome <phoneme ph="vˈɛərnər">Werner</phoneme>.'`
 
 ### STT (Speech-to-Text)
-- `POST /api/stt/transcribe` — Upload audio file, get transcription
+- `POST /api/stt/transcribe` — Upload an audio file, get a transcription
+- `GET /api/stt/capabilities` — Mounted models, device, and enabled features
 - `WS /api/stt/stream` — WebSocket streaming transcription
+
+The STT path is **faster-whisper only**: locally mounted CTranslate2 models, CPU by
+default, no cloud transcription and no GPU requirement. Audio is written to a
+temporary file for the duration of the request and removed on success, on error and
+when a streaming client disconnects.
+
+#### `POST /api/stt/transcribe`
+
+`multipart/form-data` fields (all optional except `file`):
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `file` | file | — | WAV, WebM, OGG, MP3, FLAC (max 25 MB) |
+| `language` | string | auto | Force a language code (e.g. `en`); omit to auto-detect |
+| `model` | string | deployment default | A mounted model id (see capabilities) |
+| `word_timestamps` | bool | `false` | Add `words` to every segment |
+| `vad` | bool | deployment default | Override voice-activity detection |
+
+Response:
+
+```json
+{
+  "text": "Hello world",
+  "language": "en",
+  "language_confidence": 0.94,
+  "language_probabilities": [
+    {"language": "en", "probability": 0.94},
+    {"language": "nl", "probability": 0.03}
+  ],
+  "needs_language_confirmation": false,
+  "segments": [
+    {"start": 0.0, "end": 1.52, "text": "Hello world"}
+  ],
+  "duration": 1.52,
+  "model": "base",
+  "vad_applied": true,
+  "vad_failed": false,
+  "speech_duration": 1.4
+}
+```
+
+`duration` is the duration of the **submitted** audio and is never shortened by VAD
+trimming; `speech_duration` reports how much of it was speech.
+`vad_failed` is `true` when detection could not run (see below).
+
+`language_probability` is Whisper's confidence in the detected language. When it is
+below `WHISPER_LANGUAGE_CONFIDENCE_THRESHOLD` (default `0.6`),
+`needs_language_confirmation` is `true` and a client should ask the user rather than
+silently trusting the guess. `language_probabilities` carries the top three
+candidates. Null fields are omitted from the payload.
+
+With `word_timestamps=true` each segment also carries `words`:
+
+```json
+{"start": 0.0, "end": 1.52, "text": "Hello world",
+ "words": [
+   {"word": "Hello", "start": 0.0, "end": 0.62, "probability": 0.93},
+   {"word": "world", "start": 0.68, "end": 1.48, "probability": 0.88}
+ ]}
+```
+
+Word timestamps are monotonic within a segment (start ≤ end, each word after the
+previous one). They are off by default so the payload stays small.
+
+**Precedence:** omitting `word_timestamps` uses the deployment setting
+`WHISPER_WORD_TIMESTAMPS`; sending `word_timestamps=true` or `false` always wins. The
+WebSocket `word_timestamps` config key behaves the same way.
+
+#### Voice-activity detection
+
+Before decoding, the audio is passed through the Silero VAD model that ships inside
+`faster-whisper` (MIT, ONNX, CPU). Silence is removed and the remaining speech is
+concatenated back onto the original timeline, so timestamps still point at the
+source audio. Long silences therefore cost nothing and clips with pauses transcribe
+faster.
+
+There are three distinct outcomes, and they are not interchangeable:
+
+| Situation | Response |
+|---|---|
+| Speech trimmed | `vad_applied: true`, `speech_duration` set, transcript from the trimmed audio |
+| Detection ran, no speech at all | `vad_applied: true`, `speech_duration: 0.0`, `text: ""` (nothing to decode) |
+| Detection could not run | `vad_applied: false`, `vad_failed: true`, and the **original audio is transcribed normally** |
+
+The third row covers a missing VAD module/asset, an ONNX runtime mismatch, a decoder
+that cannot open the file, and any exception raised while detecting. It is reported
+explicitly (`vad_failed`) instead of being turned into an empty transcript, so a
+broken detector degrades to slower-but-correct transcription and is visible in
+monitoring. Setting `vad=false` (per request) or `WHISPER_VAD_ENABLED=false`
+(deployment) skips detection entirely and also leaves the audio untouched.
+
+#### Model tiering
+
+Any faster-whisper model mounted under `MODELS_DIR` is selectable per request. A
+directory counts as a model when it contains `model.bin`; the id is the directory
+name with `whisper-` or `faster-whisper-` stripped:
+
+```
+models/
+  whisper-tiny/          -> "tiny"
+  whisper-base/          -> "base"
+  whisper-small/         -> "small"
+  faster-whisper-distil-large-v3/  -> "distil-large-v3"
+```
+
+The catalogue is re-scanned on every `/api/stt/capabilities` request, so a model
+mounted after boot appears without restarting the service. If `WHISPER_MODEL_PATH`
+points at a generically named directory (`.../models`), the model id comes from
+`WHISPER_MODEL_SIZE` rather than the folder name.
+
+`GET /api/stt/capabilities` reports what is mounted:
+
+```json
+{
+  "ready": true,
+  "default_model": "base",
+  "available_models": ["base", "small", "tiny"],
+  "loaded_models": ["base"],
+  "device": "cpu",
+  "compute_type": "int8",
+  "streaming": true,
+  "word_timestamps": true,
+  "language_confidence": true,
+  "vad": {"enabled": true, "available": true, "threshold": 0.5,
+          "min_silence_ms": 500, "min_speech_ms": 250, "pad_ms": 200}
+}
+```
+
+`WHISPER_MODEL_SIZE` picks the model loaded at startup; models are loaded lazily
+when first requested. Models are only ever loaded from disk
+(`local_files_only=True`) — nothing is downloaded at runtime. Requesting a model
+that is not mounted returns `400` with the list of mounted ids:
+
+```json
+{"detail": {"error": "model_not_available", "message": "...",
+            "model": "large-v3", "available_models": ["base", "small", "tiny"]}}
+```
+
+#### `WS /api/stt/stream` — streaming protocol
+
+1. **Configure once** (optional; every key is optional):
+
+   ```json
+   {"language": "en", "encoding": "pcm_s16le", "sample_rate": 16000,
+    "channels": 1, "model": "base", "word_timestamps": false,
+    "min_window_seconds": 2.0, "partial_interval_seconds": 1.0}
+   ```
+
+   The server replies `{"status": "configured", ...}` echoing the effective
+   settings. `encoding` is `pcm_s16le` for raw little-endian 16-bit PCM — the
+   recommended streaming encoding, because any byte boundary is a valid cut — or
+   `container` (default) for WAV/WebM/OGG/MP3.
+
+2. **Send binary audio chunks.** As soon as `min_window_seconds` of audio is
+   buffered, the server re-decodes the window and emits the segments that are
+   stable — those ending at least `WHISPER_STREAM_STABILITY_MARGIN_SECONDS` before
+   the end of the buffer. The unstable tail is held back until the next window or
+   until `done`, so text is not emitted twice with different timings.
+
+3. **Send `{"done": true}`** to flush the tail and finish.
+
+Every segment uses the original message contract plus additive fields:
+
+```json
+{"text": "Hello world", "start": 0.0, "end": 1.5,
+ "partial_text": "Hello world", "language": "en", "is_partial": true}
+```
+
+`words` is present when `word_timestamps` was requested. The final message is:
+
+```json
+{"done": true, "text": "Hello world", "language": "en", "language_confidence": 0.94}
+```
+
+Existing clients that only read `text`/`start`/`end`/`partial_text`/`language` and
+the final `{"done": true}` keep working unchanged. Errors arrive as
+`{"error": "..."}`; an unknown model is reported as
+`{"error": "model_not_available", "available_models": [...]}` without closing the
+socket.
+
+**Partial results need a length-derivable encoding.** Partials are emitted for
+`encoding: "pcm_s16le"` and for WAV, where the server can tell how much audio it has.
+With `encoding: "container"` (the default) and a WebM/OGG/MP3 payload — which is what
+a browser `MediaRecorder` produces — the server cannot time a prefix, so it transcribes
+once at `done` and returns the full result without intermediate partials. Send
+`pcm_s16le` from an `AudioWorklet` if you need live captions.
+
+Duplicate suppression: each segment is emitted once. If a re-decode of the growing
+buffer moves a boundary outward (`"hello"` -> `"hello world"`), the newer segment
+supersedes the earlier one, so `partial_text` and the final `text` never repeat words.
+
+#### STT configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `WHISPER_MODEL_SIZE` | `base` | Model id loaded at startup |
+| `WHISPER_DEVICE` | `auto` | `auto`, `cpu` or `cuda`; CPU is the supported default |
+| `WHISPER_COMPUTE_TYPE` | `auto` | CTranslate2 compute type (e.g. `int8` on CPU) |
+| `WHISPER_WORD_TIMESTAMPS` | `false` | Default when `word_timestamps` is omitted (an explicit `true`/`false` wins) |
+| `WHISPER_VAD_ENABLED` | `true` | Run Silero VAD before transcription |
+| `WHISPER_VAD_THRESHOLD` | `0.5` | Speech probability threshold |
+| `WHISPER_VAD_MIN_SILENCE_MS` | `500` | Silence needed to split regions |
+| `WHISPER_VAD_MIN_SPEECH_MS` | `250` | Shortest accepted speech region |
+| `WHISPER_VAD_PAD_MS` | `200` | Padding kept around each region |
+| `WHISPER_STREAM_MIN_WINDOW_SECONDS` | `2.0` | Buffered audio before the first partial |
+| `WHISPER_STREAM_PARTIAL_INTERVAL_SECONDS` | `1.0` | Minimum gap between partial passes |
+| `WHISPER_STREAM_STABILITY_MARGIN_SECONDS` | `0.35` | Tail withheld from partial output |
+| `WHISPER_STREAM_MAX_BUFFER_SECONDS` | `300` | Per-session streaming limit |
+| `WHISPER_LANGUAGE_CONFIDENCE_THRESHOLD` | `0.6` | Below this, ask the user to confirm |
+
+**Not implemented (follow-up):** speaker diarisation. It needs a separate model on
+top of the transcription, so it is tracked separately rather than smuggled into the
+STT payload.
 
 ### Examples
 
