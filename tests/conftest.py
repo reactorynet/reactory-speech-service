@@ -1,12 +1,55 @@
 """Shared test fixtures for the Reactory Speech Service."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.core.contracts import DirectionPlan
+from app.services.tts_service import SynthesisOutcome
+
+
+@pytest.fixture(autouse=True)
+def isolated_tts_cache(tmp_path, monkeypatch):
+    """Keep the cache and the persistent lexicon out of the repository.
+
+    Each test gets its own directory, so a cached render from one test can never
+    satisfy a request in another (which would hide a real inference call).
+
+    The lexicon is isolated for the same reason, plus one more: its mtime feeds
+    ``renderer_fingerprint()``, so a test that wrote the repository's
+    ``data/lexicon.json`` would change the cache key of every later test in the
+    session and leak state into the working tree.
+    """
+    monkeypatch.setattr(settings, "speech_cache_dir", str(tmp_path / "tts-cache"))
+    monkeypatch.setattr(settings, "speech_cache_enabled", True)
+    monkeypatch.setattr(settings, "speech_cache_ttl_seconds", 3600.0)
+    monkeypatch.setattr(settings, "lexicon_file_path", str(tmp_path / "lexicon.json"))
+    yield
+
+
+class _FakeEngineManager:
+    """Minimal engine-status source so /health has a row to report in unit tests."""
+
+    def status(self):
+        return {
+            "kokoro": {
+                "id": "kokoro",
+                "ready": True,
+                "loaded": True,
+                "lifecycle": "ready",
+                "queue_depth": 0,
+                "in_flight": 0,
+                "max_concurrency": 2,
+                "peak_concurrency": 0,
+                "idle_seconds": 0.0,
+                "gpu_required": False,
+                "max_chars": 10000,
+                "voices": 2,
+            }
+        }
 
 
 @pytest.fixture
@@ -34,6 +77,22 @@ def mock_tts_service():
 
     service.synthesize.return_value = (fake_wav, 0.5)
     service.synthesize_streaming.return_value = iter([(fake_wav, 0.5)])
+    service.synthesize_async = AsyncMock(
+        return_value=SynthesisOutcome(
+            audio=fake_wav,
+            duration=0.5,
+            plan=DirectionPlan(engine="kokoro"),
+            cache="miss",
+            cache_tier="none",
+            engine="kokoro",
+        )
+    )
+
+    async def _stream(*args, **kwargs):
+        yield fake_wav, 0.5
+
+    service.synthesize_streaming_async = _stream
+    service.engine_manager = _FakeEngineManager()
     service.plan_direction.return_value = DirectionPlan(engine="kokoro")
     service.capability_matrix.return_value = [
         {

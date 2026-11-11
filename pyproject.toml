@@ -38,3 +38,15 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# The rule set is declared rather than inherited. Leaving it implicit ties the
+# CI gate to whatever the newest ruff release happens to enable by default:
+# CI resolved ruff 0.17.4 from `ruff>=0.8.0` while the project was clean on
+# 0.15.5, and the gate went red on 20 findings unrelated to any code change.
+#
+# This selection is ruff's classic default -- pyflakes plus the syntax errors.
+# Widening it (I for import order, BLE for blind excepts, RUF, SIM, TRY) is a
+# deliberate decision to be made as a lint-hardening change, not a side effect
+# of a dependency bump.
+select = ["E4", "E7", "E9", "F"]

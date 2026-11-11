@@ -1,4 +1,4 @@
-.PHONY: setup dev test lint docker-build docker-run clean download-models
+.PHONY: setup dev test lint docker-build docker-run image-size clean download-models
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -46,3 +46,8 @@ docker-build:
 
 docker-run:
 	docker run -p 8765:8765 --env-file .env reactory-speech-service
+
+# Build the speech-core image and assert it stays inside the documented edge
+# budget (docs/architecture/speech-platform.md). Fails the build when exceeded.
+image-size:
+	./scripts/check_image_size.sh --build

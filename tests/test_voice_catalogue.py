@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app as fastapi_app
 from app.services.tts_service import TTSService
+from app.services import voice_registry
 from app.services.voice_registry import (
     KOKORO_SAMPLE_RATE,
     LANGUAGE_FAMILIES,
@@ -709,3 +710,34 @@ async def test_real_engine_exposes_whole_pack_and_synthesizes_every_language(cap
             assert service.get_voice(voice_id)["language"] == language
 
     assert not [record for record in caplog.records if "does not follow" in record.message]
+
+
+# ─────────────────────────────────────────────────────────────
+# F4: the cache key records the engine voice id, not the locale
+# ─────────────────────────────────────────────────────────────
+#
+# ``KokoroEngine.resolve_voice`` returns ``(engine_key, locale)`` and only the
+# engine key enters the cache key.  That is safe only while one engine never maps
+# two registered voices onto the same ``engine_voice_id`` — otherwise two voices
+# that differ only by locale would share a cache entry.  The invariant holds
+# today (0 duplicates); this test is what keeps it from being broken silently.
+
+def test_no_engine_maps_two_voices_onto_the_same_engine_voice_id():
+    records = voice_registry.VOICE_REGISTRY.voices
+    assert records, "the registry is empty"
+
+    seen: dict[tuple[str, str], str] = {}
+    collisions: list[str] = []
+    for voice_id, record in records.items():
+        key = (record.engine, record.engine_voice_id)
+        if key in seen:
+            collisions.append(
+                f"{seen[key]!r} and {voice_id!r} both map to {record.engine_voice_id!r} "
+                f"on engine {record.engine!r}"
+            )
+        seen[key] = voice_id
+
+    assert collisions == [], (
+        "two voices share an engine_voice_id, so the cache key (which excludes "
+        "the locale) cannot distinguish them: " + "; ".join(collisions)
+    )

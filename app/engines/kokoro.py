@@ -12,6 +12,7 @@ it remains the reference engine for the edge profile.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
@@ -33,7 +34,11 @@ from app.core.contracts import (
 )
 from app.engines.base import EngineUnavailableError, UnknownVoiceError, lower_direction
 from app.services import voice_registry
-from app.services.phonetic_converter import phonetic_converter
+from app.services.phonetic_converter import (
+    PhoneticConversionError,
+    g2p_lock,
+    phonetic_converter,
+)
 from app.services.voice_registry import (
     DEFAULT_LOCALE,
     KOKORO_ENGINE,
@@ -82,7 +87,19 @@ class KokoroEngine:
         self._ready = bool(ready)
 
     async def initialize(self) -> None:
-        """Load the Kokoro ONNX model. Call once at startup."""
+        """Load the Kokoro ONNX model without blocking the event loop.
+
+        Model loading is file and ONNX-runtime work measured in seconds; running
+        it in the loop would stall ``/health`` during a lazy load, so it is
+        dispatched to a worker thread.  Awaiting this method is idempotent: a
+        loaded model is returned as-is.
+        """
+        if self._ready and self._model is not None:
+            return
+        await asyncio.to_thread(self.load)
+
+    def load(self) -> None:
+        """Synchronously load the Kokoro ONNX model (runs on a worker thread)."""
         try:
             from kokoro_onnx import Kokoro
 
@@ -131,6 +148,16 @@ class KokoroEngine:
         except Exception:
             logger.exception("Failed to load Kokoro TTS model")
             self._ready = False
+
+    def unload(self) -> None:
+        """Release the model so another engine can take its memory.
+
+        ``kokoro_onnx`` holds the ONNX session and the voice pack; dropping the
+        reference is what returns them.  A later :meth:`load` re-reads the files,
+        so an idle engine can be unloaded and reloaded on demand.
+        """
+        self._model = None
+        self._ready = False
 
     # ------------------------------------------------------------------
     # Voices
@@ -343,32 +370,40 @@ class KokoroEngine:
             warnings=plan.warnings,
         )
 
-    def stream(self, req: EngineRequest) -> Iterator[AudioChunk]:
-        """Yield one rendered chunk per sentence."""
+    def synthesize_span(self, req: EngineRequest, text: str) -> AudioChunk:
+        """Render one span of a request.
+
+        This is the unit of streaming work: the orchestrator splits the text and
+        dispatches each span to the thread pool, so a long stream never blocks
+        the event loop between sentences.
+        """
         if not self._ready or self._model is None:
             raise EngineUnavailableError("TTS service not initialized")
 
         plan = self.lower(req.direction)
         voice_key, locale = self.resolve_voice(req.voice)
         rate = self._rate_for(plan)
+        samples, sample_rate = self._render(
+            text,
+            voice=voice_key,
+            rate=rate,
+            locale=locale,
+            is_phonemes=req.is_phonemes,
+            phonetic_preprocess=req.phonetic_preprocess,
+            custom_lexicon=req.custom_lexicon,
+        )
+        return AudioChunk(
+            audio=self.samples_to_wav(samples, sample_rate),
+            duration=len(samples) / sample_rate,
+            sample_rate=sample_rate,
+        )
 
+    def stream(self, req: EngineRequest) -> Iterator[AudioChunk]:
+        """Yield one rendered chunk per sentence."""
         for sentence in self.split_sentences(req.text):
             if not sentence.strip():
                 continue
-            samples, sample_rate = self._render(
-                sentence,
-                voice=voice_key,
-                rate=rate,
-                locale=locale,
-                is_phonemes=req.is_phonemes,
-                phonetic_preprocess=req.phonetic_preprocess,
-                custom_lexicon=req.custom_lexicon,
-            )
-            yield AudioChunk(
-                audio=self.samples_to_wav(samples, sample_rate),
-                duration=len(samples) / sample_rate,
-                sample_rate=sample_rate,
-            )
+            yield self.synthesize_span(req, sentence)
 
     def _render(
         self,
@@ -381,7 +416,27 @@ class KokoroEngine:
         phonetic_preprocess: bool | None,
         custom_lexicon: dict[str, str] | None,
     ) -> tuple[np.ndarray, int]:
-        """Run inference for one span of text, with the historical phoneme path."""
+        """Run inference for one span of text, with the historical phoneme path.
+
+        Phonemisation is the only step serialised by
+        :data:`app.services.phonetic_converter.G2P_LOCK`; the ONNX run never
+        holds it.
+
+        That distinction is not cosmetic.  ``kokoro_onnx.Kokoro.create(...,
+        is_phonemes=False)`` performs the phonemisation *and* the ONNX session
+        run inside one Python call, so wrapping that call in the lock would
+        serialise every render in the process whenever the caller disables
+        phonetic preprocessing (``"phonetic_preprocess": false`` or
+        ``PHONETIC_PROCESSING_ENABLED=false``) - defeating the per-engine
+        concurrency limit and filling the inference pool with lock waiters.
+        The two steps are therefore split here: phonemise under the lock, then
+        render with ``is_phonemes=True``, which is byte-for-byte the sequence
+        ``create`` performs internally.
+
+        If phonemisation through the converter fails, the request degrades to
+        the engine's own phonemisation rather than handing prose to the engine
+        as if it were IPA.
+        """
         model = self._model
         should_phonemize = (
             phonetic_preprocess
@@ -390,18 +445,65 @@ class KokoroEngine:
         )
 
         if is_phonemes:
-            # Caller supplied phonemes directly.
+            # Caller supplied phonemes directly; tokenize only, no espeak involved.
             return model.create(
                 text, voice=voice, speed=rate, lang=locale, is_phonemes=True
             )
         if should_phonemize and phonetic_converter.is_available:
-            phonetic_text = phonetic_converter.convert_to_phonetic(
-                text, language=locale, custom_lexicon=custom_lexicon
+            try:
+                phonetic_text = phonetic_converter.convert_to_phonetic(
+                    text, language=locale, custom_lexicon=custom_lexicon
+                )
+                return model.create(
+                    phonetic_text, voice=voice, speed=rate, lang=locale, is_phonemes=True
+                )
+            except PhoneticConversionError:
+                logger.error(
+                    "Phonetic conversion failed for this span; falling back to the "
+                    "engine's own phonemisation",
+                    exc_info=True,
+                )
+        # No converter pre-processing: kokoro must phonemise this span itself.
+        return self._render_with_engine_phonemisation(
+            model, text, voice=voice, rate=rate, locale=locale
+        )
+
+    @staticmethod
+    def _render_with_engine_phonemisation(
+        model,
+        text: str,
+        *,
+        voice: str,
+        rate: float,
+        locale: str,
+    ) -> tuple[np.ndarray, int]:
+        """Phonemise under ``G2P_LOCK``, then run the ONNX session without it.
+
+        ``create(is_phonemes=False)`` fuses phonemisation and inference, so it is
+        split into its two steps here.  Only the tokenizer call is serialised; the
+        render that follows runs concurrently with every other render, which is
+        what keeps ``SPEECH_ENGINE_MAX_CONCURRENCY`` meaningful on this path.
+
+        A model double that exposes no ``tokenizer`` cannot be split, so it keeps
+        the previous (serialised) shape: correct, merely slower, and never
+        reachable with a real ``kokoro_onnx.Kokoro``.
+        """
+        tokenizer = getattr(model, "tokenizer", None)
+        phonemize = getattr(tokenizer, "phonemize", None)
+        if not callable(phonemize):
+            logger.debug(
+                "Model %s exposes no tokenizer; phonemising inside create() under G2P_LOCK",
+                type(model).__name__,
             )
-            return model.create(
-                phonetic_text, voice=voice, speed=rate, lang=locale, is_phonemes=True
-            )
-        return model.create(text, voice=voice, speed=rate, lang=locale, is_phonemes=False)
+            with g2p_lock():
+                return model.create(
+                    text, voice=voice, speed=rate, lang=locale, is_phonemes=False
+                )
+
+        with g2p_lock():
+            phonemes = phonemize(text, lang=locale)
+        # Lock released before inference: the whole point of splitting the steps.
+        return model.create(phonemes, voice=voice, speed=rate, lang=locale, is_phonemes=True)
 
     # ------------------------------------------------------------------
     # Helpers
