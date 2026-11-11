@@ -1,14 +1,39 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+from app.core.contracts import Direction
 
 
 class TTSRequest(BaseModel):
+    """Body of ``POST /api/tts/synthesize``.
+
+    The Phase 0 fields are unchanged.  ``direction`` and ``engine`` are additive:
+    ``speed`` remains an accepted alias for ``direction.prosody.rate``, and when
+    both are supplied ``direction`` wins and the response says so.
+    """
+
     text: str = Field(..., min_length=1, max_length=10000, description="Text to synthesize")
-    voice: str | None = Field(None, description="Voice ID (e.g., 'af_heart')")
+    voice: str | None = Field(None, description="Voice ID, as listed by GET /api/tts/voices")
     speed: float | None = Field(
         None,
         ge=0.5,
         le=2.0,
-        description="Speech speed multiplier (0.5-2.0, the range kokoro-onnx accepts)",
+        description=(
+            "Speech speed multiplier (0.5-2.0). Legacy alias for direction.prosody.rate; "
+            "when both are supplied, direction wins."
+        ),
+    )
+    engine: str | None = Field(
+        None,
+        description="Optional engine override (e.g. 'kokoro'); omit to let the voice decide",
+    )
+    direction: Direction | None = Field(
+        None,
+        description=(
+            "Provider-neutral direction: style, intensity and prosody. Omit for the legacy "
+            "path, which behaves exactly as before this field existed."
+        ),
     )
     is_phonemes: bool = Field(default=False, description="Whether text is already phonetic (IPA) writing")
     phonetic_preprocess: bool | None = Field(default=None, description="Explicitly enable/disable phonetic preprocessing")
@@ -51,6 +76,19 @@ class TTSResponse(BaseModel):
     duration: float = Field(..., description="Audio duration in seconds")
     format: str = Field(default="wav", description="Audio format")
     sample_rate: int = Field(default=24000, description="Sample rate in Hz")
+    engine: str | None = Field(default=None, description="Engine that rendered the audio")
+    direction_applied: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Direction controls the engine actually applied",
+    )
+    direction_ignored: list[str] = Field(
+        default_factory=list,
+        description="Direction controls the engine could not apply",
+    )
+    direction_warnings: list[str] = Field(
+        default_factory=list,
+        description="Human-readable explanation for each ignored control",
+    )
 
 
 class STTRequest(BaseModel):
@@ -110,9 +148,15 @@ class VoicesResponse(BaseModel):
 
 
 class EngineCapabilities(BaseModel):
-    """What one TTS engine can and cannot do."""
+    """What one TTS engine can and cannot do.
+
+    ``id`` is the stable key from Phase 0; ``engine`` carries the same value under
+    the engine-agnostic contract name.  Both are emitted so clients written
+    against either shape keep working.
+    """
 
     id: str
+    engine: str | None = None
     name: str
     available: bool = False
     license: str | None = None
@@ -125,7 +169,9 @@ class EngineCapabilities(BaseModel):
     styles: list[str] = Field(default_factory=list)
     supports_cloning: bool = False
     supports_streaming: bool = False
+    supports_ssml: bool = False
     sample_rates: list[int] = Field(default_factory=list)
+    max_chars: int | None = None
     gpu_required: bool = False
     speed_range: list[float] = Field(default_factory=list)
 

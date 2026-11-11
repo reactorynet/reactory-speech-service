@@ -1,0 +1,1569 @@
+{
+  "schema_version": 1,
+  "description": "Canonical voice registry. This file is the only source of voice data for the speech service; engine adapters and routers must not hard-code voice ids.",
+  "default_voice": "af_heart",
+  "license": "Apache-2.0",
+  "attribution": "Kokoro-82M v1.0",
+  "voices": [
+    {
+      "id": "bf_alice",
+      "name": "Alice",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "british",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bf_alice"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bf_emma",
+      "name": "Emma",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "british",
+        "grade-b-minus",
+        "recommended"
+      ],
+      "quality": "B-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bf_emma"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bf_isabella",
+      "name": "Isabella",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "british",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bf_isabella"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bf_lily",
+      "name": "Lily",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "british",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bf_lily"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bm_daniel",
+      "name": "Daniel",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "british",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bm_daniel"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bm_fable",
+      "name": "Fable",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "british",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bm_fable"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bm_george",
+      "name": "George",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "british",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bm_george"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "bm_lewis",
+      "name": "Lewis",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "british",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "bm_lewis"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_alloy",
+      "name": "Alloy",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_alloy"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_aoede",
+      "name": "Aoede",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_aoede"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_bella",
+      "name": "Bella",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-a-minus",
+        "recommended"
+      ],
+      "quality": "A-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_bella"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_heart",
+      "name": "Heart",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-a",
+        "recommended"
+      ],
+      "quality": "A",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_heart"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_jessica",
+      "name": "Jessica",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_jessica"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_kore",
+      "name": "Kore",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_kore"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_nicole",
+      "name": "Nicole",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-b-minus",
+        "recommended"
+      ],
+      "quality": "B-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_nicole"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_nova",
+      "name": "Nova",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_nova"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_river",
+      "name": "River",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_river"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_sarah",
+      "name": "Sarah",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_sarah"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "af_sky",
+      "name": "Sky",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": [
+        "female",
+        "english",
+        "american",
+        "grade-c-minus"
+      ],
+      "quality": "C-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "af_sky"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_adam",
+      "name": "Adam",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-f-plus"
+      ],
+      "quality": "F+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_adam"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_echo",
+      "name": "Echo",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_echo"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_eric",
+      "name": "Eric",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_eric"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_fenrir",
+      "name": "Fenrir",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_fenrir"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_liam",
+      "name": "Liam",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_liam"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_michael",
+      "name": "Michael",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_michael"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_onyx",
+      "name": "Onyx",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-d"
+      ],
+      "quality": "D",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_onyx"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_puck",
+      "name": "Puck",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_puck"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "am_santa",
+      "name": "Santa",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "male",
+      "tags": [
+        "male",
+        "english",
+        "american",
+        "grade-d-minus"
+      ],
+      "quality": "D-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "am_santa"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "ef_dora",
+      "name": "Dora",
+      "engine": "kokoro",
+      "language": "es",
+      "locale": "es",
+      "gender": "female",
+      "tags": [
+        "female",
+        "spanish",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "ef_dora"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "em_alex",
+      "name": "Alex",
+      "engine": "kokoro",
+      "language": "es",
+      "locale": "es",
+      "gender": "male",
+      "tags": [
+        "male",
+        "spanish",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "em_alex"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "em_santa",
+      "name": "Santa",
+      "engine": "kokoro",
+      "language": "es",
+      "locale": "es",
+      "gender": "male",
+      "tags": [
+        "male",
+        "spanish",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "em_santa"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "ff_siwis",
+      "name": "Siwis",
+      "engine": "kokoro",
+      "language": "fr-FR",
+      "locale": "fr-fr",
+      "gender": "female",
+      "tags": [
+        "female",
+        "french",
+        "grade-b-minus",
+        "recommended"
+      ],
+      "quality": "B-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "ff_siwis"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "hf_alpha",
+      "name": "Alpha",
+      "engine": "kokoro",
+      "language": "hi",
+      "locale": "hi",
+      "gender": "female",
+      "tags": [
+        "female",
+        "hindi",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "hf_alpha"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "hf_beta",
+      "name": "Beta",
+      "engine": "kokoro",
+      "language": "hi",
+      "locale": "hi",
+      "gender": "female",
+      "tags": [
+        "female",
+        "hindi",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "hf_beta"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "hm_omega",
+      "name": "Omega",
+      "engine": "kokoro",
+      "language": "hi",
+      "locale": "hi",
+      "gender": "male",
+      "tags": [
+        "male",
+        "hindi",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "hm_omega"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "hm_psi",
+      "name": "Psi",
+      "engine": "kokoro",
+      "language": "hi",
+      "locale": "hi",
+      "gender": "male",
+      "tags": [
+        "male",
+        "hindi",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "hm_psi"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "if_sara",
+      "name": "Sara",
+      "engine": "kokoro",
+      "language": "it",
+      "locale": "it",
+      "gender": "female",
+      "tags": [
+        "female",
+        "italian",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "if_sara"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "im_nicola",
+      "name": "Nicola",
+      "engine": "kokoro",
+      "language": "it",
+      "locale": "it",
+      "gender": "male",
+      "tags": [
+        "male",
+        "italian",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "im_nicola"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "jf_alpha",
+      "name": "Alpha",
+      "engine": "kokoro",
+      "language": "ja",
+      "locale": "ja",
+      "gender": "female",
+      "tags": [
+        "female",
+        "japanese",
+        "grade-c-plus",
+        "recommended"
+      ],
+      "quality": "C+",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "jf_alpha"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "jf_gongitsune",
+      "name": "Gongitsune",
+      "engine": "kokoro",
+      "language": "ja",
+      "locale": "ja",
+      "gender": "female",
+      "tags": [
+        "female",
+        "japanese",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "jf_gongitsune"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "jf_nezumi",
+      "name": "Nezumi",
+      "engine": "kokoro",
+      "language": "ja",
+      "locale": "ja",
+      "gender": "female",
+      "tags": [
+        "female",
+        "japanese",
+        "grade-c-minus"
+      ],
+      "quality": "C-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "jf_nezumi"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "jf_tebukuro",
+      "name": "Tebukuro",
+      "engine": "kokoro",
+      "language": "ja",
+      "locale": "ja",
+      "gender": "female",
+      "tags": [
+        "female",
+        "japanese",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "jf_tebukuro"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "jm_kumo",
+      "name": "Kumo",
+      "engine": "kokoro",
+      "language": "ja",
+      "locale": "ja",
+      "gender": "male",
+      "tags": [
+        "male",
+        "japanese",
+        "grade-c-minus"
+      ],
+      "quality": "C-",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "jm_kumo"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "pf_dora",
+      "name": "Dora",
+      "engine": "kokoro",
+      "language": "pt-BR",
+      "locale": "pt-br",
+      "gender": "female",
+      "tags": [
+        "female",
+        "portuguese",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "pf_dora"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "pm_alex",
+      "name": "Alex",
+      "engine": "kokoro",
+      "language": "pt-BR",
+      "locale": "pt-br",
+      "gender": "male",
+      "tags": [
+        "male",
+        "portuguese",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "pm_alex"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "pm_santa",
+      "name": "Santa",
+      "engine": "kokoro",
+      "language": "pt-BR",
+      "locale": "pt-br",
+      "gender": "male",
+      "tags": [
+        "male",
+        "portuguese",
+        "unrated"
+      ],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "pm_santa"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zf_xiaobei",
+      "name": "Xiaobei",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "female",
+      "tags": [
+        "female",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zf_xiaobei"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zf_xiaoni",
+      "name": "Xiaoni",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "female",
+      "tags": [
+        "female",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zf_xiaoni"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zf_xiaoxiao",
+      "name": "Xiaoxiao",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "female",
+      "tags": [
+        "female",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zf_xiaoxiao"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zf_xiaoyi",
+      "name": "Xiaoyi",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "female",
+      "tags": [
+        "female",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zf_xiaoyi"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zm_yunjian",
+      "name": "Yunjian",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "male",
+      "tags": [
+        "male",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zm_yunjian"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zm_yunxi",
+      "name": "Yunxi",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "male",
+      "tags": [
+        "male",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zm_yunxi"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zm_yunxia",
+      "name": "Yunxia",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "male",
+      "tags": [
+        "male",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zm_yunxia"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    },
+    {
+      "id": "zm_yunyang",
+      "name": "Yunyang",
+      "engine": "kokoro",
+      "language": "zh",
+      "locale": "cmn",
+      "gender": "male",
+      "tags": [
+        "male",
+        "chinese",
+        "mandarin",
+        "grade-c"
+      ],
+      "quality": "C",
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "base",
+        "voice": "zm_yunyang"
+      },
+      "supports": {
+        "rate": true,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true
+    }
+  ]
+}
