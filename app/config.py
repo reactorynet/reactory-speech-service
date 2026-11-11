@@ -20,6 +20,21 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"
     whisper_compute_type: str = "auto"
 
+    # STT — Phase 7 (SPEECH-008). Model tiering, VAD and streaming tuning.
+    # Models are discovered from directories under ``models_dir`` that contain a
+    # ``model.bin``; the ``whisper_model_size`` above selects the one loaded at boot.
+    whisper_word_timestamps: bool = False
+    whisper_vad_enabled: bool = True
+    whisper_vad_threshold: float = 0.5
+    whisper_vad_min_silence_ms: int = 500
+    whisper_vad_min_speech_ms: int = 250
+    whisper_vad_pad_ms: int = 200
+    whisper_stream_min_window_seconds: float = 2.0
+    whisper_stream_partial_interval_seconds: float = 1.0
+    whisper_stream_stability_margin_seconds: float = 0.35
+    whisper_stream_max_buffer_seconds: float = 300.0
+    whisper_language_confidence_threshold: float = 0.6
+
     # Models
     models_dir: str = "models"
 
