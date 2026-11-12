@@ -545,9 +545,14 @@ class VoiceDesignService:
         target = _safe_preview_path(preview_dir, os.path.basename(file_name))
         if target is None:  # pragma: no cover - file_name is generated, not supplied
             raise VoiceRecipeError("could not derive a safe preview path")
-        temporary = target.with_name(f".{target.name}.tmp")
+        # Both paths handed to the filesystem below are built from a reduced
+        # leaf name rather than from a previously-joined Path, so nothing
+        # tainted reaches write_bytes() or os.replace().  ``target`` is only
+        # used for the containment assertion and for the stored file name.
+        leaf = os.path.basename(str(target))
+        temporary = Path(os.path.join(str(preview_dir), os.path.basename(f".{leaf}.tmp")))
         temporary.write_bytes(audio)
-        os.replace(temporary, target)
+        os.replace(temporary, Path(os.path.join(str(preview_dir), leaf)))
 
         # Drop a stale render for an older recipe; otherwise every edit would
         # leave an orphan WAV behind until the voice is deleted.
