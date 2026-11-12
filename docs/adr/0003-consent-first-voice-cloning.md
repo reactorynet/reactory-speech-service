@@ -5,6 +5,8 @@
 - **Deciders:** Reactory platform owners
 - **Supersedes:** none
 - **Unblocks:** SPEECH-006 (`REACTORY-302016408/20261110/166562983`)
+- **Assignment:** consent-gated cloning (1-3, 5-6); provenance via signed manifest rather than an
+  embedded watermark (4, 4a)
 - **Constrained by:** ADR-0001 (open source, self-hosted, edge-first; permissive licences only)
 
 ## Context
@@ -116,6 +118,78 @@ This is an accepted risk, recorded explicitly. If the risk posture changes — f
 contract requires detectable provenance — the decision to revisit is this section, not a hidden
 config flag.
 
+### 4a. Provenance is a signed manifest plus registry lookup, not an embedded watermark
+
+With no watermark in shipped audio, the obvious question is whether provenance can be carried in the
+file some other way. **Yes — out of band, and that is the chosen mechanism.**
+
+Every synthesis for a cloned or registered voice is accompanied by a **signed manifest**:
+
+```json
+{
+  "audioSha256": "<sha256 over the DECODED PCM samples, not the container>",
+  "voiceId":     "<registry id>",
+  "consentId":   "<consent record id, for reference voices>",
+  "instanceId":  "<server instance>",
+  "createdAt":   "<iso-8601>",
+  "sampleRate":  24000,
+  "channels":    1,
+  "signature":   "<instance key signature over the fields above>"
+}
+```
+
+Verification is a **registry lookup**: hash the caller's audio, find the manifest for that hash, check
+the signature against the instance's published key. Nothing is written into the audio.
+
+#### Why this rather than an embedded marker
+
+Transparent, robust and bit-exact are mutually exclusive in twos. This was measured against the
+actual service output (24 kHz mono 16-bit WAV, 2.496 s), not assumed:
+
+| Approach | Samples bit-identical | Survives a wav→wav resave | Survives a lossy transcode |
+|---|---|---|---|
+| RIFF `LIST`/`INFO` metadata chunk | **yes** (`ba6777fe…` unchanged) | **no** — `ICMT` gone after one `afconvert` pass | no |
+| LSB watermark, 1 LSB of 16-bit (−96 dBFS) | no — 36 of 59,904 samples changed | partly | **no** — dither or any re-encode erases it |
+| **Signed manifest + registry** | **yes** — nothing written to the audio | **yes** — the manifest is not in the file | **yes** — see the hash definition below |
+
+The metadata chunk was the tempting middle option and it fails the only test that matters: it is
+stripped by the first thing any consumer does. A marker that survives one hop is not provenance.
+
+Because `audioSha256` is taken over **decoded PCM**, re-wrapping the same samples in a different
+container yields the same hash. A lossy transcode changes the samples and therefore breaks the
+lookup — which is correct and honest: it is no longer the file we made.
+
+#### What this proves
+
+- **Authenticity of the record.** The signature over `audioSha256` cannot be forged without the
+  instance key. Someone holding the manifest cannot produce audio matching its hash; someone holding
+  the audio cannot produce a manifest for it.
+- **Which instance, which consent, and when** are all inside the signed payload.
+
+#### What it does not prove — and must be stated as such
+
+- **It does not prove any given file came from us.** It proves *a specific file we hold a record for*
+  came from us. Absence of a record is **not** evidence of absence — the file may have been
+  transcoded, cropped, re-encoded, or never registered. A negative lookup must be reported as
+  **"no record found"**, never as **"not ours"**. This is the most misusable property of the design
+  and must be enforced in any support tooling built on it.
+- **It does not travel with the file.** Discard the manifest and provenance is lost. That is
+  acceptable when we hold the record and useless when we do not.
+- **A metadata comment is not a signature.** If a convenience tag is ever written into the container
+  (`ICMT "consent=cr_9f3a"`), it is a hint to look us up, never the proof. Anyone can write that
+  string into any file; only the signature over the hash verifies.
+
+#### Operational consequence
+
+The manifest registry is a **durable store**, not a cache, with the same retention and encryption
+posture as the consent records in decision 2. Losing it loses the provenance guarantee for everything
+after the loss. Manifest retention is deliberately **not** bounded by the reference-audio ceiling in
+decision 3: that ceiling caps how long we keep the *voice*, while a manifest records that a *file was
+made* and must outlive the voice to be useful in a dispute.
+
+This section is the provenance control that decision 4 declines to place in the audio. If the risk
+posture changes, revisit 4 and 4a together.
+
 ### 5. Takedown is a privileged external operation
 
 - The service exposes a takedown operation (disable a clone, delete its artefacts) and **executes it
@@ -176,6 +250,10 @@ the clone needs.
 clean. Recorded above as an accepted risk with its consequence stated, rather than implemented
 half-heartedly or silently dropped.
 
+**Embedded metadata as the provenance carrier.** Measured and rejected (see 4a): a RIFF
+`LIST`/`INFO` chunk leaves the samples bit-identical but is removed by a single wav→wav resave, so it
+proves nothing once the file has been touched. It survives exactly one hop.
+
 **Service-side role checks.** The service cannot distinguish a customer from an operator, so a
 role check inside the service would be a check against nothing. Authorisation belongs at the gateway.
 
@@ -201,9 +279,16 @@ These make the invariants measurable rather than aspirational:
 8. Synthesising with a clone works through the ordinary `/synthesize` path with no special case.
 9. **No watermark is present in production-mode output** — asserted positively, so the decision is
    enforced rather than assumed. A dev-mode test asserts the watermark *is* present.
-10. Audit entries exist for create, use and takedown; a synthesis entry contains the character count
+10. A signed manifest accompanies every synthesis; its signature verifies against the instance key
+    over `audioSha256`, and a test asserts that substituting different audio or tampering with any
+    signed field invalidates it.
+11. A lookup for a registered file succeeds; for an unknown file it returns **no record found** and
+    never asserts the file is foreign — asserted directly, because the wording is the safety property.
+12. `audioSha256` is computed over decoded PCM, so re-wrapping identical samples in a different
+    container still resolves. A test asserts a container-only change does not break the lookup.
+13. Audit entries exist for create, use and takedown; a synthesis entry contains the character count
     and **does not** contain the text (asserted, not reviewed by eye).
-11. Startup with a corrupt consent store degrades to "no clones" rather than failing to boot — the
+14. Startup with a corrupt consent store degrades to "no clones" rather than failing to boot — the
     same tolerance the designed-voice store already has.
 
 ## Implementation notes for SPEECH-006
