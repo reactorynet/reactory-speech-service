@@ -63,7 +63,7 @@ class SpeakerEmbedder(Protocol):
 
     def embed(self, samples: np.ndarray, sample_rate: int) -> np.ndarray:
         """Return a 1-D embedding for a mono or multi-channel signal."""
-        ...
+        raise NotImplementedError
 
 
 def _mel_filterbank(sample_rate: int, fft_size: int, bands: int) -> np.ndarray:

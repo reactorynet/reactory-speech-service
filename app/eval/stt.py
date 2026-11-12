@@ -39,11 +39,11 @@ class Transcriber(Protocol):
 
     def describe(self) -> dict:
         """Serialisable description for the report header."""
-        ...
+        raise NotImplementedError
 
     def transcribe(self, wav_bytes: bytes, language: str | None = None) -> str | None:
         """Transcript of ``wav_bytes``, or ``None`` when no transcript is available."""
-        ...
+        raise NotImplementedError
 
 
 class NullTranscriber:
