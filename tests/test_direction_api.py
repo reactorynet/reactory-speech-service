@@ -18,19 +18,30 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.core.contracts import AudioChunk, AudioResult, EngineCapabilities
 from app.main import app as fastapi_app
+from app.services.designed_voices import preset_voice_ids
 from app.services.tts_service import TTSService
 from app.services.voice_registry import KOKORO_SAMPLE_RATE, SHIPPED_VOICE_IDS
+
+#: Pack voices plus the designed presets the service ships.
+EXPECTED_VOICE_COUNT = len(SHIPPED_VOICE_IDS) + len(preset_voice_ids())
 
 
 class FakeKokoro:
     """Deterministic engine double; sample count is inversely proportional to speed."""
 
+    STYLE = np.zeros((510, 1, 256), dtype=np.float32)
+
     def __init__(self, voice_ids=SHIPPED_VOICE_IDS):
         self.voices = {voice_id: None for voice_id in voice_ids}
         self.calls: list[dict] = []
 
+    def get_voice_style(self, name):
+        if name not in self.voices:
+            raise KeyError(name)
+        return self.STYLE
+
     def create(self, text, voice, speed=1.0, lang="en-us", is_phonemes=False):
-        if voice not in self.voices:
+        if not isinstance(voice, np.ndarray) and voice not in self.voices:
             raise ValueError(f"Voice {voice} not found in available voices")
         if not 0.5 <= speed <= 2.0:
             raise ValueError(f"Speed should be between 0.5 and 2.0, got {speed}")
@@ -388,7 +399,7 @@ def test_capabilities_lists_every_registered_engine_with_the_full_matrix(api):
     assert kokoro["native_pitch"] is False
     assert kokoro["styles"] == ["neutral"]
     assert kokoro["gpu_required"] is False
-    assert kokoro["voice_count"] == 54
+    assert kokoro["voice_count"] == EXPECTED_VOICE_COUNT
 
 
 # ─────────────────────────────────────────────────────────────

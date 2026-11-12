@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from app.core.contracts import Direction
 
@@ -160,6 +160,122 @@ class VoicesResponse(BaseModel):
             "catalogue is the shipped-pack manifest and synthesis returns 503."
         ),
     )
+
+
+class VoiceComponent(BaseModel):
+    """One ingredient of a blended voice."""
+
+    voice: str = Field(
+        ...,
+        min_length=1,
+        description="Shipped pack voice id (a designed voice is rejected with 422)",
+    )
+    weight: float = Field(
+        ...,
+        description=(
+            "Relative weight. Weights must be finite and non-negative, sum to more than "
+            "zero, and are normalised to 1 internally. One component must carry at "
+            "least 0.6 of the total."
+        ),
+    )
+
+
+class VoiceDesignRequest(BaseModel):
+    """Body of ``POST /api/tts/voices/design``.
+
+    A designed voice is a **recipe**: a weighted blend of 2-4 base style
+    tensors.  Blending changes timbre, **not** emotion; an emotional delivery
+    needs an expressive engine, not a blend.
+    """
+
+    name: str = Field(..., min_length=1, max_length=80, description="Display name; the id is derived from it")
+    components: list[VoiceComponent] = Field(
+        ...,
+        description=(
+            "2-4 shipped pack voices from one language family, with weights. A designed "
+            "voice (blend or base alias) is not a valid component."
+        ),
+    )
+    language: str | None = Field(
+        default=None,
+        description="Optional language assertion; must match the components' family",
+    )
+    direction: Direction | None = Field(
+        default=None,
+        validation_alias=AliasChoices("direction", "default_direction"),
+        description=(
+            "Optional default direction applied when a synthesis request names this voice "
+            "and expresses no direction of its own. Kokoro applies rate natively; pitch "
+            "is reported as ignored, exactly as for base voices."
+        ),
+    )
+    tags: list[str] | None = Field(default=None, description="Optional discovery tags")
+
+
+class BaseVoiceAliasRequest(BaseModel):
+    """Body of ``POST /api/tts/voices`` — register an alias for a base voice.
+
+    The alias stores ``style_spec: {type: base, voice: <pack id>}``; pack data is
+    never copied or duplicated.
+    """
+
+    name: str = Field(..., min_length=1, max_length=80, description="Display name; the id is derived from it")
+    base_voice: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("base_voice", "voice", "base"),
+        description="Shipped pack voice id to alias; a designed voice is rejected with 422",
+    )
+    language: str | None = Field(default=None, description="Optional language assertion")
+    direction: Direction | None = Field(
+        default=None,
+        validation_alias=AliasChoices("direction", "default_direction"),
+        description="Optional default direction",
+    )
+    tags: list[str] | None = Field(default=None, description="Optional discovery tags")
+
+
+class VoiceDesignComponent(BaseModel):
+    """A component of a designed voice, with its raw and normalised weight."""
+
+    voice: str
+    weight: float = Field(..., description="Weight as supplied and persisted")
+    normalised_weight: float = Field(..., description="Weight divided by the total, so the set sums to 1")
+
+
+class VoiceDesignDescriptor(BaseModel):
+    """A designed voice plus the recipe metadata a client needs to explain it.
+
+    ``components`` and ``normalised_weights`` are descriptive; the durable
+    artefact is ``style_spec`` (the recipe). The resolved style tensor is never
+    returned or persisted.
+    """
+
+    id: str
+    name: str
+    engine: str
+    language: str
+    locale: str
+    gender: str
+    quality: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    style_type: str = Field(..., description="'blend' or 'base'")
+    components: list[VoiceDesignComponent] = Field(default_factory=list)
+    normalised_weights: dict[str, float] = Field(default_factory=dict)
+    resolved_language: str
+    created_at: str | None = None
+    preview_url: str
+    default_direction: dict[str, Any] | None = None
+    preset: bool = False
+    style_spec: dict[str, Any] = Field(
+        ...,
+        description="The persisted recipe; the tensor is derived from it, never stored",
+    )
+
+
+class VoiceDeleteResponse(BaseModel):
+    status: str
+    id: str
 
 
 class EngineCapabilities(BaseModel):

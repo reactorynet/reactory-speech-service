@@ -53,6 +53,9 @@ Copy `.env.example` to `.env` and customize:
 | `SPEECH_SERVICE_PORT` | `8765` | Server port |
 | `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice. Must be an enabled voice id from `GET /api/tts/voices`; an unknown or disabled id falls back to the registry default |
 | `KOKORO_DEFAULT_SPEED` | `1.0` | Default speech speed |
+| `DESIGNED_VOICES_PATH` | `data/designed_voices.json` | Designed-voice registry (recipes, never tensors). Missing or malformed files are tolerated |
+| `DESIGNED_VOICES_PREVIEW_DIR` | `data/previews` | Preview WAV cache; defaults to a directory beside the registry |
+| `DESIGNED_VOICE_TENSOR_CACHE_SIZE` | `64` | Bound on resolved blend tensors (~522 KB each) |
 | `WHISPER_MODEL_SIZE` | `base` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_DEVICE` | `auto` | Device: `auto`, `cpu`, `cuda` |
 | `PHONETIC_PROCESSING_ENABLED` | `True` | Enable phonetic text processing (phonemise before synthesis) |
@@ -407,6 +410,7 @@ Copy `.env.example` to `.env` and customize:
 | `SPEECH_SERVICE_PORT` | `8765` | Server port |
 | `KOKORO_DEFAULT_VOICE` | `af_heart` | Default TTS voice. Must be an enabled voice id from `GET /api/tts/voices`; an unknown or disabled id falls back to the registry default |
 | `KOKORO_DEFAULT_SPEED` | `1.0` | Default speech speed |
+| `DESIGNED_VOICES_PATH` | `data/designed_voices.json` | Designed-voice registry (recipes, never tensors) |
 | `WHISPER_MODEL_SIZE` | `base` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_DEVICE` | `auto` | Device: `auto`, `cpu`, `cuda` |
 
@@ -490,10 +494,67 @@ curl http://localhost:8765/api/tts/voices/af_heart
 curl http://localhost:8765/api/tts/capabilities
 ```
 
+### Designed voices (blending)
+
+Kokoro style tensors are all shape `(510, 1, 256)` and `Kokoro.create()` accepts an
+`ndarray`, so a normalised weighted sum of two to four base tensors is a valid new voice
+identity — no training, no second model, no GPU. The recipe is persisted; the tensor is
+derived and cached.
+
+**Blending changes timbre. It does not change emotion.** A blend cannot make a voice sound
+empathetic, calm or cheerful; that needs an expressive engine (SPEECH-005). The names of the
+shipped presets describe timbre, not a performance.
+
+Four presets ship as registry data in `data/designed_voices.json`:
+
+| Id | Name | Language | Recipe |
+|---|---|---|---|
+| `warm_narrator` | Warm Narrator | en-US | `af_heart` 0.65 + `af_bella` 0.20 + `af_nicole` 0.15 |
+| `calm_assistant` | Calm Assistant | en-US | `af_nicole` 0.70 + `af_sarah` 0.20 + `af_kore` 0.10 |
+| `bright_support` | Bright Support | en-US | `af_bella` 0.60 + `af_sky` 0.25 + `af_nova` 0.15 |
+| `steady_narration` | Steady Narration | en-GB | `bm_george` 0.70 + `bm_fable` 0.20 + `bf_emma` 0.10 |
+
+```bash
+# Design a voice (2-4 components, one language family, one dominant >= 0.6)
+curl -X POST http://localhost:8765/api/tts/voices/design \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Evening Host",
+       "components": [{"voice": "af_heart", "weight": 0.65},
+                      {"voice": "af_bella", "weight": 0.35}]}'
+
+# Preview (audio/wav; a cache hit does not re-synthesise)
+curl http://localhost:8765/api/tts/voices/evening_host/preview --output preview.wav
+
+# The persisted recipe and design metadata
+curl http://localhost:8765/api/tts/voices/evening_host/design
+
+# Register an alias for a base voice without duplicating pack data
+curl -X POST http://localhost:8765/api/tts/voices \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Heart Alias", "base_voice": "af_heart"}'
+
+# Delete a designed voice; pack voices and shipped presets return 409
+curl -X DELETE http://localhost:8765/api/tts/voices/evening_host
+```
+
+Rules: two to four components; weights finite, non-negative and summing above zero (normalised
+to 1 internally); all components in one language family (the phonemiser is chosen from the
+voice's language); one component at 0.6 or more of the weight. Ingredients must be **shipped
+pack voices** — a designed voice (blend or base alias) is rejected, so no recipe can break
+when another is deleted. Violations return `422` with an actionable message, and unknown
+component ids are rejected with the valid ids listed.
+
+Designed voices live in `DESIGNED_VOICES_PATH` (default `data/designed_voices.json`). Loading
+is tolerant: a missing or malformed file logs and continues with the pack voices only, and the
+unusable file is moved to `<name>.corrupt-<timestamp>` before the first write so tolerance
+never becomes data loss. The registry is a single-process store — run one worker, or use a
+shared external store before scaling out. The resolved-tensor cache is bounded by
+`DESIGNED_VOICE_TENSOR_CACHE_SIZE` and can be cleared with
+`KokoroEngine.clear_blend_cache()`; the model itself is never copied or reloaded.
+
 The per-voice catalogue of record — language families, the full grade table, blending
-recipes and licensing notes — lives in `docs/voices/kokoro-voice-catalogue.md`. That
-document is introduced by the speech-direction branch (PR #6); until that merges, the table
-above and `GET /api/tts/voices` are the available references.
+recipes and licensing notes — lives in `docs/voices/kokoro-voice-catalogue.md`. Designed
+voices are documented in `docs/voices/designed-voices.md`.
 
 ## Evaluation harness
 

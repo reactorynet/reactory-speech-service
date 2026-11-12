@@ -20,6 +20,18 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    groups:
+      # github/codeql-action ships as three separate actions (init, analyze,
+      # upload-sarif) that MUST all be the same version. CodeQL refuses to run
+      # otherwise:
+      #   "Loaded a configuration file for version '4.39.3', but running
+      #    version '3.39.3'. All steps in a workflow that use
+      #    github/codeql-action must use the same version"
+      # Ungrouped, Dependabot opens one PR per action and every one of them
+      # creates a version mismatch, so none of them can ever go green.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: docker
     directory: /

@@ -30,6 +30,7 @@ from app.core.contracts import Direction, DirectionPlan
 from app.core.direction import resolve_direction
 from app.engines.base import EngineUnavailableError
 from app.models.schemas import (
+    BaseVoiceAliasRequest,
     CapabilitiesResponse,
     EngineCapabilities,
     ErrorResponse,
@@ -40,12 +41,17 @@ from app.models.schemas import (
     PhonemizeResponse,
     TTSRequest,
     TTSResponse,
+    VoiceDeleteResponse,
+    VoiceDesignDescriptor,
+    VoiceDesignRequest,
     VoiceInfo,
     VoicesResponse,
 )
+from app.services.designed_voices import VoiceConflictError, VoiceRecipeError
 from app.services.phonetic_converter import phonetic_converter
 from app.services.inference import InferenceExecutor
 from app.services.tts_service import ENGINE_ID, SAMPLE_RATE, SynthesisOutcome
+from app.services.voice_design import VoiceDesignService, default_direction
 from app.services.voice_registry import filter_catalogue
 
 logger = logging.getLogger(__name__)
@@ -125,8 +131,15 @@ def _plan_for(
 
     Returns the effective direction, the lowering plan and any alias notes (the
     ``speed`` vs ``direction.prosody.rate`` precedence message).
+
+    A designed voice may carry a *default* direction.  It is used only when the
+    request expresses nothing itself, so an explicit ``speed`` or ``direction``
+    always wins and the plan honestly reflects what synthesis will apply.
     """
-    direction, alias_warnings = resolve_direction(body.speed, body.direction)
+    requested = body.direction
+    if requested is None and body.speed is None:
+        requested = default_direction(body.voice)
+    direction, alias_warnings = resolve_direction(body.speed, requested)
     plan = tts_service.plan_direction(
         voice=body.voice,
         engine=body.engine,
@@ -340,6 +353,185 @@ async def capabilities(request: Request) -> CapabilitiesResponse:
     return CapabilitiesResponse(
         engines=[EngineCapabilities(**row) for row in tts_service.capability_matrix()]
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# Designed voices (SPEECH-003)
+#
+# Blending changes TIMBRE, not EMOTION.  Kokoro has no emotion control, so a
+# designed voice is a different vocal identity, never a delivery style.
+# ─────────────────────────────────────────────────────────────
+
+@router.post(
+    "/voices/design",
+    response_model=VoiceDesignDescriptor,
+    status_code=201,
+    responses={
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+)
+async def design_voice(request: Request, body: VoiceDesignRequest) -> VoiceDesignDescriptor:
+    """Design a new voice by blending 2-4 base Kokoro style tensors.
+
+    The recipe is persisted; the resolved tensor is derived and cached, so no
+    model is copied, re-downloaded or retrained.  Blending changes **timbre**,
+    not **emotion** — it cannot make a voice sound empathetic, calm or cheerful.
+    Emotion needs an expressive engine (SPEECH-005).
+
+    Rules: 2-4 components, finite non-negative weights summing above zero,
+    one language family, one dominant component at 0.6 or more of the weight,
+    and every component a **shipped pack voice**.  A designed voice (blend or
+    base alias) is not a valid ingredient: composing user-managed entries would
+    let deleting one silently break another, so it is rejected with 422.
+    """
+    service = VoiceDesignService(request.app.state.tts_service)
+    try:
+        descriptor = await service.create_blend(
+            name=body.name,
+            components=[component.model_dump() for component in body.components],
+            language=body.language,
+            direction=body.direction,
+            tags=body.tags,
+        )
+    except VoiceConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except VoiceRecipeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return VoiceDesignDescriptor(**descriptor)
+
+
+@router.post(
+    "/voices",
+    response_model=VoiceDesignDescriptor,
+    status_code=201,
+    responses={
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+)
+async def register_base_voice(
+    request: Request, body: BaseVoiceAliasRequest
+) -> VoiceDesignDescriptor:
+    """Register a product alias for a shipped base voice.
+
+    The registry entry stores ``style_spec: {type: base, voice: <pack id>}``; the
+    pack's audio data is never copied or duplicated.  This is a naming tool, not
+    a second voice: the audio is byte-for-byte the base voice's.
+
+    The target must be a **shipped pack voice**.  Aliasing a designed voice is
+    rejected with 422: the alias would advertise a second name for a recipe that
+    can be deleted underneath it.
+    """
+    service = VoiceDesignService(request.app.state.tts_service)
+    try:
+        descriptor = await service.create_base_alias(
+            name=body.name,
+            base_voice=body.base_voice,
+            language=body.language,
+            direction=body.direction,
+            tags=body.tags,
+        )
+    except VoiceConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except VoiceRecipeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return VoiceDesignDescriptor(**descriptor)
+
+
+@router.get(
+    "/voices/{voice_id}/design",
+    response_model=VoiceDesignDescriptor,
+    responses={404: {"model": ErrorResponse}},
+)
+async def designed_voice_recipe(voice_id: str, request: Request) -> VoiceDesignDescriptor:
+    """Return a designed voice's recipe and design metadata.
+
+    The recipe is the durable artefact; the resolved style tensor is never
+    returned.  Blending changes timbre, not emotion.
+    """
+    service = VoiceDesignService(request.app.state.tts_service)
+    descriptor = service.descriptor(voice_id)
+    if descriptor is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Unknown designed voice '{voice_id}'. "
+                "GET /api/tts/voices lists the available voices."
+            ),
+        )
+    return VoiceDesignDescriptor(**descriptor)
+
+
+@router.get(
+    "/voices/{voice_id}/preview",
+    responses={
+        200: {"content": {"audio/wav": {}}},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+async def designed_voice_preview(voice_id: str, request: Request) -> Response:
+    """Serve a designed voice's preview WAV, synthesising only on a cache miss.
+
+    The preview is cached by the recipe hash: a cache hit does not run
+    inference, and editing the recipe invalidates the cached WAV.
+    """
+    service = VoiceDesignService(request.app.state.tts_service)
+    try:
+        result = await service.ensure_preview(voice_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Unknown designed voice '{voice_id}'. "
+                "GET /api/tts/voices lists the available voices."
+            ),
+        )
+    except EngineUnavailableError as exc:
+        logger.warning("Preview unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    duration = float(result.get("duration", 0.0))
+    return Response(
+        content=result["audio"],
+        media_type="audio/wav",
+        headers={
+            "X-Preview-Cache": result["cache"],
+            "X-Sample-Rate": str(result.get("sample_rate", SAMPLE_RATE)),
+            "X-Duration": str(round(duration, 3)),
+            "X-Format": "wav",
+        },
+    )
+
+
+@router.delete(
+    "/voices/{voice_id}",
+    response_model=VoiceDeleteResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+)
+async def delete_voice(voice_id: str, request: Request) -> VoiceDeleteResponse:
+    """Delete a designed voice. Pack voices and shipped presets are immutable (409)."""
+    service = VoiceDesignService(request.app.state.tts_service)
+    try:
+        service.delete(voice_id)
+    except VoiceConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Unknown voice '{voice_id}'. "
+                "GET /api/tts/voices lists the available voices."
+            ),
+        )
+    return VoiceDeleteResponse(status="deleted", id=voice_id)
 
 
 @router.post(
