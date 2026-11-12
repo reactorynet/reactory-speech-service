@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "description": "Designed voices. A record stores the RECIPE, never the resolved style tensor: blends are derived and cached at runtime. Blending changes timbre, not emotion.",
+  "license": "Apache-2.0",
+  "attribution": "Kokoro-82M v1.0",
+  "voices": [
+    {
+      "id": "warm_narrator",
+      "name": "Warm Narrator",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": ["preset", "designed", "narration", "warm"],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "blend",
+        "components": [
+          {"voice": "af_heart", "weight": 0.65},
+          {"voice": "af_bella", "weight": 0.2},
+          {"voice": "af_nicole", "weight": 0.15}
+        ]
+      },
+      "supports": {"rate": true, "pitch": false, "style": false, "clone": false},
+      "enabled": true,
+      "preset": true,
+      "created_at": "2026-11-10T00:00:00Z",
+      "default_direction": {"prosody": {"rate": 0.95}},
+      "preview": null
+    },
+    {
+      "id": "calm_assistant",
+      "name": "Calm Assistant",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": ["preset", "designed", "assistant", "calm"],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "blend",
+        "components": [
+          {"voice": "af_nicole", "weight": 0.7},
+          {"voice": "af_sarah", "weight": 0.2},
+          {"voice": "af_kore", "weight": 0.1}
+        ]
+      },
+      "supports": {"rate": true, "pitch": false, "style": false, "clone": false},
+      "enabled": true,
+      "preset": true,
+      "created_at": "2026-11-10T00:00:00Z",
+      "default_direction": {"prosody": {"rate": 0.95}},
+      "preview": null
+    },
+    {
+      "id": "bright_support",
+      "name": "Bright Support",
+      "engine": "kokoro",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "female",
+      "tags": ["preset", "designed", "support", "bright"],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "blend",
+        "components": [
+          {"voice": "af_bella", "weight": 0.6},
+          {"voice": "af_sky", "weight": 0.25},
+          {"voice": "af_nova", "weight": 0.15}
+        ]
+      },
+      "supports": {"rate": true, "pitch": false, "style": false, "clone": false},
+      "enabled": true,
+      "preset": true,
+      "created_at": "2026-11-10T00:00:00Z",
+      "default_direction": {"prosody": {"rate": 1.05}},
+      "preview": null
+    },
+    {
+      "id": "steady_narration",
+      "name": "Steady Narration",
+      "engine": "kokoro",
+      "language": "en-GB",
+      "locale": "en-gb",
+      "gender": "male",
+      "tags": ["preset", "designed", "narration", "steady"],
+      "quality": null,
+      "license": "Apache-2.0",
+      "attribution": "Kokoro-82M v1.0",
+      "style_spec": {
+        "type": "blend",
+        "components": [
+          {"voice": "bm_george", "weight": 0.7},
+          {"voice": "bm_fable", "weight": 0.2},
+          {"voice": "bf_emma", "weight": 0.1}
+        ]
+      },
+      "supports": {"rate": true, "pitch": false, "style": false, "clone": false},
+      "enabled": true,
+      "preset": true,
+      "created_at": "2026-11-10T00:00:00Z",
+      "default_direction": {"prosody": {"rate": 0.95}},
+      "preview": null
+    }
+  ]
+}

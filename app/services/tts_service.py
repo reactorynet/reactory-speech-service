@@ -45,6 +45,7 @@ from app.engines.router import EngineRouter
 from app.services.inference import InferenceExecutor
 from app.services.phonetic_converter import phonetic_converter
 from app.services.synthesis_cache import CacheEntry, SynthesisCache, build_cache_key
+from app.services.voice_design import default_direction
 from app.services.voice_registry import (
     KOKORO_ENGINE,
     KOKORO_SAMPLE_RATE,
@@ -311,6 +312,11 @@ class TTSService:
         ``cache=False`` bypasses both tiers for this request; the global switch
         is ``SPEECH_CACHE_ENABLED``.
         """
+        # A designed voice may ship a default direction (rate/pitch).  It applies
+        # only when the caller expressed nothing, so an explicit speed or
+        # direction always wins.
+        if direction is None and speed is None:
+            direction = default_direction(voice)
         merged, _ = resolve_direction(speed, direction)
         request = EngineRequest(
             text=text,
@@ -408,6 +414,8 @@ class TTSService:
         sentences.  Streaming is deliberately not cached: a cache entry is a
         complete buffer, and chunk assembly is the caller's protocol.
         """
+        if direction is None and speed is None:
+            direction = default_direction(voice)
         merged = direction if direction is not None else _legacy_direction(speed)
         request = EngineRequest(
             text=text,
@@ -539,6 +547,8 @@ class TTSService:
         This is the inline, synchronous API.  HTTP and WebSocket handlers use
         :meth:`synthesize_async` so inference never runs on the event loop.
         """
+        if direction is None and speed is None:
+            direction = default_direction(voice)
         merged, _ = resolve_direction(speed, direction)
         request = EngineRequest(
             text=text,
@@ -583,6 +593,8 @@ class TTSService:
         This is the inline, synchronous API; the WebSocket endpoint uses
         :meth:`synthesize_streaming_async`.
         """
+        if direction is None and speed is None:
+            direction = default_direction(voice)
         request = EngineRequest(
             text=text,
             voice=voice,

@@ -1,5 +1,6 @@
 """Shared test fixtures for the Reactory Speech Service."""
 
+import shutil
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
@@ -28,6 +29,33 @@ def isolated_tts_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "speech_cache_ttl_seconds", 3600.0)
     monkeypatch.setattr(settings, "lexicon_file_path", str(tmp_path / "lexicon.json"))
     yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_designed_voices(tmp_path, monkeypatch):
+    """Keep designed-voice writes out of the repository.
+
+    Each test gets its own copy of the shipped registry, so the four preset
+    voices behave exactly as they do in production while a test that designs or
+    deletes a voice cannot mutate ``data/designed_voices.json`` or leak state
+    into a later test.  The in-memory store and the resolved-tensor cache are
+    both reset around every test.
+    """
+    from app.engines.kokoro import clear_blend_cache
+    from app.services import designed_voices
+
+    store_path = tmp_path / "designed_voices.json"
+    seed = designed_voices.DEFAULT_DESIGNED_VOICES_PATH
+    if seed.is_file():
+        shutil.copyfile(seed, store_path)
+
+    monkeypatch.setattr(settings, "designed_voices_path", str(store_path))
+    monkeypatch.setattr(settings, "designed_voices_preview_dir", str(tmp_path / "previews"))
+    designed_voices.reset_store(store_path)
+    clear_blend_cache()
+    yield
+    designed_voices.reset_store(store_path)
+    clear_blend_cache()
 
 
 class _FakeEngineManager:

@@ -97,6 +97,11 @@ synthesised correctly through the existing API.
 - Store the **recipe**, not the tensor. The tensor is derived and cached; the recipe is the
   durable artefact.
 
+The productised form of this — the design endpoint, the recipe registry, the four shipped
+presets and the preview cache — is documented in
+[`designed-voices.md`](designed-voices.md). Read that document before implementing against
+the blend API; this section remains the underlying model fact.
+
 **What blending does not do**
 
 Blending changes timbre. It does not change emotion, add breathiness, or make a voice sound

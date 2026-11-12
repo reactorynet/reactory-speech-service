@@ -13,6 +13,7 @@ from app.config import settings
 from app.main import app as fastapi_app
 from app.services.tts_service import TTSService
 from app.services import voice_registry
+from app.services.designed_voices import preset_voice_ids
 from app.services.voice_registry import (
     KOKORO_SAMPLE_RATE,
     LANGUAGE_FAMILIES,
@@ -32,6 +33,11 @@ requires_models = pytest.mark.skipif(
     not (MODEL_PATH.exists() and VOICES_PATH.exists()),
     reason="Kokoro model files are not present in models/",
 )
+
+#: The four designed presets shipped in ``data/designed_voices.json``.  They are
+#: selectable voices, so they appear in discovery alongside the 54 pack voices.
+PRESET_VOICE_IDS = preset_voice_ids()
+EXPECTED_CATALOGUE_SIZE = len(SHIPPED_VOICE_IDS) + len(PRESET_VOICE_IDS)
 requires_catalogue_doc = pytest.mark.skipif(
     not CATALOGUE_DOC.exists(),
     reason="docs/voices/kokoro-voice-catalogue.md is not on this branch (owned by PR #6)",
@@ -107,12 +113,21 @@ class FakeKokoro:
     contract for unknown voices and out-of-range speeds, without running inference.
     """
 
+    #: One shared style tensor: resolving a blend only needs equal shapes, and
+    #: sharing keeps the double cheap (a real pack has 54 x 522 KB tensors).
+    STYLE = np.zeros((510, 1, 256), dtype=np.float32)
+
     def __init__(self, voice_ids=SHIPPED_VOICE_IDS):
         self.voices = {voice_id: None for voice_id in voice_ids}
         self.calls: list[dict] = []
 
+    def get_voice_style(self, name):
+        if name not in self.voices:
+            raise KeyError(name)
+        return self.STYLE
+
     def create(self, text, voice, speed=1.0, lang="en-us", is_phonemes=False):
-        if voice not in self.voices:
+        if not isinstance(voice, np.ndarray) and voice not in self.voices:
             raise ValueError(f"Voice {voice} not found in available voices")
         if not 0.5 <= speed <= 2.0:
             raise ValueError(f"Speed should be between 0.5 and 2.0, got {speed}")
@@ -374,13 +389,17 @@ def test_grade_table_matches_the_catalogue_document_on_disk():
 # GET /api/tts/voices
 # ─────────────────────────────────────────────────────────────
 
-def test_list_voices_returns_all_54_voices(catalogue_client):
+def test_list_voices_returns_all_pack_and_designed_voices(catalogue_client):
+    """Discovery covers the 54 pack voices and the 4 shipped designed presets."""
     response = catalogue_client.get("/api/tts/voices")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 54
-    assert len(body["voices"]) == 54
+    assert body["total"] == EXPECTED_CATALOGUE_SIZE
+    assert len(body["voices"]) == EXPECTED_CATALOGUE_SIZE
+    assert {voice["id"] for voice in body["voices"]} == set(SHIPPED_VOICE_IDS) | set(
+        PRESET_VOICE_IDS
+    )
     assert len({voice["language"] for voice in body["voices"]}) == 9
 
 
@@ -431,17 +450,17 @@ def test_list_voices_reports_availability_when_engine_is_loaded(fake_engine_clie
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
-        ("?language=en-US", 20),
-        ("?language=en-us", 20),
-        ("?language=en-GB", 8),
+        ("?language=en-US", 23),
+        ("?language=en-us", 23),
+        ("?language=en-GB", 9),
         ("?language=ja", 5),
         ("?language=zh", 8),
-        ("?gender=female", 29),
-        ("?gender=male", 25),
+        ("?gender=female", 32),
+        ("?gender=male", 26),
         ("?tag=recommended", 12),
         ("?tag=unrated", 7),
         ("?tag=grade-c-minus", 3),
-        ("?engine=kokoro", 54),
+        ("?engine=kokoro", EXPECTED_CATALOGUE_SIZE),
         ("?engine=piper", 0),
         ("?engine=kokoro&language=ja", 5),
         ("?language=ja&gender=male", 1),
@@ -517,7 +536,7 @@ def test_capabilities_reports_kokoro_engine(catalogue_client):
     assert kokoro["supports_cloning"] is False
     assert kokoro["supports_streaming"] is True
     assert kokoro["sample_rates"] == [24000]
-    assert kokoro["voice_count"] == 54
+    assert kokoro["voice_count"] == EXPECTED_CATALOGUE_SIZE
     assert kokoro["languages"] == [
         "en-GB",
         "en-US",
@@ -628,7 +647,7 @@ def test_json_synthesis_emits_both_sample_rate_headers(fake_engine_client):
 
 def test_every_catalogued_voice_resolves_to_a_synthesis_call(fake_engine_service):
     voices = fake_engine_service.get_voices()
-    assert len(voices) == 54
+    assert len(voices) == EXPECTED_CATALOGUE_SIZE
 
     for voice in voices:
         wav_bytes, duration = fake_engine_service.synthesize(
@@ -638,8 +657,14 @@ def test_every_catalogued_voice_resolves_to_a_synthesis_call(fake_engine_service
         assert duration > 0
 
     calls = fake_engine_service._kokoro.calls
-    assert [call["voice"] for call in calls] == [voice["id"] for voice in voices]
     assert [call["lang"] for call in calls] == [voice["locale"] for voice in voices]
+    for call, voice in zip(calls, voices, strict=True):
+        if voice["id"] in SHIPPED_VOICE_IDS:
+            assert call["voice"] == voice["id"]
+        else:
+            # A designed voice reaches the engine as its resolved style tensor.
+            assert isinstance(call["voice"], np.ndarray)
+            assert call["voice"].shape == FakeKokoro.STYLE.shape
 
 
 @pytest.mark.parametrize(("language", "sample"), LANGUAGE_SAMPLES.items())
@@ -699,7 +724,7 @@ async def test_real_engine_exposes_whole_pack_and_synthesizes_every_language(cap
     await service.initialize()
 
     assert service.is_ready
-    assert len(service.voice_ids) == 54
+    assert len(service.voice_ids) == EXPECTED_CATALOGUE_SIZE
     assert len({voice["language"] for voice in service.get_voices()}) == 9
 
     with caplog.at_level(logging.WARNING):

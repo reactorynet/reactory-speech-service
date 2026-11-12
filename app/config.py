@@ -66,6 +66,21 @@ class Settings(BaseSettings):
     speech_cache_ttl_seconds: float = 24 * 60 * 60
     speech_cache_disk_max_bytes: int = 512 * 1024 * 1024
 
+    # TTS — Phase 2 (SPEECH-003): designed voices.
+    #
+    # A designed voice is a *recipe* — a weighted blend of base Kokoro style
+    # tensors, or an alias for one base voice — persisted as JSON.  The tensor is
+    # always derived on demand and cached in memory; it is never stored.  The
+    # store lives outside the package so a container can mount it read-write, and
+    # loading tolerates a missing or malformed file (pack voices keep working).
+    designed_voices_path: str = "data/designed_voices.json"
+    # Where preview WAVs are cached.  Defaults to a ``previews`` directory beside
+    # the store file when left unset.
+    designed_voices_preview_dir: str | None = None
+    # Upper bound on resolved blend tensors held in memory.  One tensor is
+    # 510*1*256 float32 = ~522 KB, so 64 entries is ~33 MB worst case.
+    designed_voice_tensor_cache_size: int = 64
+
     # Models
     models_dir: str = "models"
 
@@ -86,6 +101,17 @@ class Settings(BaseSettings):
     @property
     def speech_cache_dir_resolved(self) -> Path:
         return Path(self.speech_cache_dir)
+
+    @property
+    def designed_voices_resolved(self) -> Path:
+        return Path(self.designed_voices_path)
+
+    @property
+    def designed_voices_preview_resolved(self) -> Path:
+        """Preview cache directory: configured, or ``<store dir>/previews``."""
+        if self.designed_voices_preview_dir:
+            return Path(self.designed_voices_preview_dir)
+        return self.designed_voices_resolved.parent / "previews"
 
     def engine_concurrency_limit(self, engine_id: str) -> int:
         """Concurrent inference slots for one engine.

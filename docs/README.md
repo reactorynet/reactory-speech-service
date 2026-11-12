@@ -30,6 +30,7 @@ speech service. It is the reference for every ticket raised against this reposit
 | [`architecture/speech-platform.md`](architecture/speech-platform.md) | Target architecture, contracts and capability matrix |
 | [`roadmap/voice-expression-roadmap.md`](roadmap/voice-expression-roadmap.md) | Phased plan and per-ticket scope |
 | [`voices/kokoro-voice-catalogue.md`](voices/kokoro-voice-catalogue.md) | The 54 shipped voices and how to design new ones |
+| [`voices/designed-voices.md`](voices/designed-voices.md) | Blending rules, the four shipped presets, previews and persistence |
 
 ## Tickets
 
@@ -40,7 +41,7 @@ reference is the immutable ticket key in the support system.
 |---|---|---|---|---|
 | 0 | `SPEECH-001` | Unlock the 54-voice catalogue, expose a voice API, fix schema/header defects | In progress | `REACTORY-302016408/20261110/2432217528` |
 | 1 | `SPEECH-002` | Engine adapter layer, direction model, capabilities API | Backlog | `REACTORY-302016408/20261110/1663424173` |
-| 2 | `SPEECH-003` | Voice design by style-vector blending + presets + previews | Backlog | `REACTORY-302016408/20261110/1712540096` |
+| 2 | `SPEECH-003` | Voice design by style-vector blending + presets + previews | In progress | `REACTORY-302016408/20261110/1712540096` |
 | 3 | `SPEECH-004` | Non-blocking inference, per-engine concurrency, synthesis cache, engine lifecycle | Backlog | `REACTORY-302016408/20261110/3808700412` |
 | 4 | `SPEECH-005` | Expressive engine adapter (Chatterbox, MIT) for emotion and paralinguistic tags | Backlog | `REACTORY-302016408/20261110/4004237369` |
 | 5 | `SPEECH-006` | Consent-first voice cloning with watermarking and provenance | Blocked on policy | `REACTORY-302016408/20261110/166562983` |

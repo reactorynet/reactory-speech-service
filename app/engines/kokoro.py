@@ -16,6 +16,8 @@ import asyncio
 import io
 import logging
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,8 @@ from app.services.phonetic_converter import (
     g2p_lock,
     phonetic_converter,
 )
+from app.services import designed_voices
+from app.services.designed_voices import normalised_components, recipe_hash
 from app.services.voice_registry import (
     DEFAULT_LOCALE,
     KOKORO_ENGINE,
@@ -51,6 +55,60 @@ from app.services.voice_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Prefix of the engine key for a designed blend.  ``resolve_voice`` returns a
+#: stable string identity (the recipe hash) so cache keys and logs never depend
+#: on an in-memory tensor; the tensor itself is substituted at render time.
+BLEND_VOICE_PREFIX = "blend:"
+
+#: Resolved blend tensors, keyed by the stable recipe hash.  Insertion-ordered so
+#: the oldest entry can be evicted once ``designed_voice_tensor_cache_size`` is
+#: reached; one tensor is ~522 KB, so the default bound is ~33 MB.
+_BLEND_TENSORS: OrderedDict[str, np.ndarray] = OrderedDict()
+_BLEND_LOCK = threading.RLock()
+
+
+def blend_cache_size() -> int:
+    """Number of resolved blend tensors currently cached."""
+    with _BLEND_LOCK:
+        return len(_BLEND_TENSORS)
+
+
+def blend_cache_bytes() -> int:
+    """Bytes held by the resolved blend tensor cache."""
+    with _BLEND_LOCK:
+        return sum(tensor.nbytes for tensor in _BLEND_TENSORS.values())
+
+
+def clear_blend_cache() -> None:
+    """Drop every resolved blend tensor (the recipes remain on disk)."""
+    with _BLEND_LOCK:
+        _BLEND_TENSORS.clear()
+
+
+def _cache_limit() -> int:
+    try:
+        return max(1, int(settings.designed_voice_tensor_cache_size))
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return 64
+
+
+def _cache_get(key: str) -> np.ndarray | None:
+    with _BLEND_LOCK:
+        tensor = _BLEND_TENSORS.get(key)
+        if tensor is not None:
+            _BLEND_TENSORS.move_to_end(key)
+        return tensor
+
+
+def _cache_put(key: str, tensor: np.ndarray) -> np.ndarray:
+    with _BLEND_LOCK:
+        _BLEND_TENSORS[key] = tensor
+        _BLEND_TENSORS.move_to_end(key)
+        limit = _cache_limit()
+        while len(_BLEND_TENSORS) > limit:
+            _BLEND_TENSORS.popitem(last=False)
+        return tensor
 
 
 class KokoroEngine:
@@ -77,6 +135,9 @@ class KokoroEngine:
 
     @model.setter
     def model(self, value) -> None:
+        # A resolved blend tensor is derived from one pack's style vectors, so a
+        # model swap invalidates it.  Never serve audio from the previous pack.
+        clear_blend_cache()
         self._model = value
 
     @property
@@ -136,6 +197,7 @@ class KokoroEngine:
                 return
 
             logger.info("Loading Kokoro TTS model from %s (voices: %s)", model_path, voices_path)
+            clear_blend_cache()
             self._model = Kokoro(model_path, voices_path)
             self._ready = True
             logger.info(
@@ -156,6 +218,7 @@ class KokoroEngine:
         reference is what returns them.  A later :meth:`load` re-reads the files,
         so an idle engine can be unloaded and reloaded on demand.
         """
+        clear_blend_cache()
         self._model = None
         self._ready = False
 
@@ -190,17 +253,68 @@ class KokoroEngine:
         record = voice_registry.get_record(voice_id)
         return record is None or record.enabled
 
+    @staticmethod
+    def _is_renderable(record, pack_ids: set[str] | None) -> bool:
+        """Whether every ingredient of a designed voice is in the loaded pack.
+
+        A designed voice is only advertised when the engine can actually render
+        it: a preset whose components are absent from a custom pack would be a
+        404 generator.  Before the model is loaded (``pack_ids is None``) the
+        registry is the manifest, so the voice is advertised.
+        """
+        if pack_ids is None:
+            return True
+        style_spec = record.style_spec
+        if record.style_type == "base":
+            return str(style_spec.get("voice") or "") in pack_ids
+        if record.style_type == "blend":
+            components = style_spec.get("components") or []
+            if not components:
+                return False
+            return all(
+                isinstance(component, dict)
+                and str(component.get("voice") or "") in pack_ids
+                for component in components
+            )
+        return False
+
+    def designed_voice_ids(self) -> list[str]:
+        """Ids of the designed voices this engine can render right now."""
+        try:
+            store = designed_voices.get_store()
+        except Exception:  # pragma: no cover - defensive: never hide pack voices
+            logger.warning("Designed-voice store unavailable", exc_info=True)
+            return []
+        pack_ids = self.engine_voice_ids
+        pack = set(pack_ids) if pack_ids is not None else None
+        return [
+            record.id
+            for record in store.records()
+            if record.engine == self.id
+            and record.enabled
+            and self._is_renderable(record, pack)
+        ]
+
     def available_voice_ids(self) -> list[str]:
         """All voice ids this engine exposes on this deployment.
 
         Engine keys win whenever an engine is loaded; before the model is loaded
         we fall back to the registry so that voice discovery works without
-        inference.  Registry-disabled voices are never advertised.
+        inference.  Registry-disabled voices are never advertised.  Designed
+        voices are appended after the pack ids: they are not engine keys, but
+        they are selectable voices and must appear in discovery.
         """
         engine_ids = self.engine_voice_ids
         if engine_ids is not None:
-            return [voice_id for voice_id in engine_ids if self._is_enabled(voice_id)]
-        return list(voice_registry.VOICE_REGISTRY.ids(engine=self.id, enabled_only=True))
+            ids = [voice_id for voice_id in engine_ids if self._is_enabled(voice_id)]
+        else:
+            ids = list(voice_registry.VOICE_REGISTRY.ids(engine=self.id, enabled_only=True))
+        seen = set(ids)
+        for voice_id in self.designed_voice_ids():
+            if voice_id not in seen:
+                ids.append(voice_id)
+                seen.add(voice_id)
+        return ids
 
     def voices(self) -> list[VoiceDescriptor]:
         """The enriched catalogue for this engine, sorted by language then id."""
@@ -234,20 +348,142 @@ class KokoroEngine:
                     f"Voice '{requested}' belongs to engine '{record.engine}', not '{self.id}'. "
                     "GET /api/tts/voices lists the voices available here."
                 )
-            engine_key = record.engine_voice_id
-            locale = record.locale
+            if record.style_type == "blend":
+                # Resolving the recipe must not load the model: the orchestrator
+                # asks for this identity to build a cache key before deciding
+                # whether inference is needed at all.
+                engine_key = self.blend_voice_key(record.style_spec)
+                locale = record.locale
+            else:
+                engine_key = record.engine_voice_id
+                locale = record.locale
         else:
             engine_key = requested
             locale = DEFAULT_LOCALE
 
         available = self.engine_voice_ids
-        if available is not None and engine_key not in available:
+        if (
+            available is not None
+            and not engine_key.startswith(BLEND_VOICE_PREFIX)
+            and engine_key not in available
+        ):
             raise UnknownVoiceError(
                 f"Unknown voice '{requested}'. This deployment exposes "
                 f"{len(available)} voices; GET /api/tts/voices lists them all."
             )
 
         return engine_key, locale
+
+    @staticmethod
+    def blend_voice_key(style_spec: dict[str, Any]) -> str:
+        """The stable engine identity of a blend recipe: ``blend:<recipe hash>``."""
+        return f"{BLEND_VOICE_PREFIX}{recipe_hash(style_spec)}"
+
+    def resolve_blend(self, style_spec: dict[str, Any]) -> np.ndarray:
+        """Resolve a blend recipe to a float32 style tensor, with caching.
+
+        Each component tensor is a ``(510, 1, 256)`` style vector from the
+        loaded voice pack.  The weighted sum is itself a valid style input for
+        :meth:`kokoro_onnx.Kokoro.create`, so no training, model download or GPU
+        is involved.  The result is cached under the normalised recipe hash and
+        evicted oldest-first beyond the configured bound.
+        """
+        key = recipe_hash(style_spec)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
+        if self._model is None:
+            raise EngineUnavailableError("TTS service not initialized")
+        components = normalised_components(style_spec)
+        if not components:
+            raise UnknownVoiceError(
+                "A blend recipe needs at least one component with a positive weight."
+            )
+
+        blended: np.ndarray | None = None
+        for component in components:
+            voice_id = str(component["voice"])
+            tensor = self._style_tensor(voice_id)
+            if blended is None:
+                blended = np.zeros_like(tensor, dtype=np.float32)
+            elif tensor.shape != blended.shape:
+                raise UnknownVoiceError(
+                    f"Component '{voice_id}' has style shape {tensor.shape}, expected "
+                    f"{blended.shape}. All Kokoro voices share one style shape, so a "
+                    "mismatch means the voice pack is inconsistent."
+                )
+            blended += np.float32(component["weight"]) * tensor
+
+        assert blended is not None  # components is non-empty
+        return _cache_put(key, np.ascontiguousarray(blended, dtype=np.float32))
+
+    def _style_tensor(self, voice_id: str) -> np.ndarray:
+        """The raw style tensor for one pack voice."""
+        model = self._model
+        if model is None:  # pragma: no cover - guarded by resolve_blend
+            raise EngineUnavailableError("TTS service not initialized")
+        getter = getattr(model, "get_voice_style", None)
+        try:
+            if callable(getter):
+                tensor = getter(voice_id)
+            else:  # pragma: no cover - compatibility with minimal doubles
+                voices = getattr(model, "voices", {})
+                tensor = voices[voice_id]
+        except (KeyError, IndexError) as exc:
+            raise UnknownVoiceError(
+                f"Blend component '{voice_id}' is not present in the loaded voice pack."
+            ) from exc
+        if tensor is None:  # pragma: no cover - a pack loaded without styles
+            raise UnknownVoiceError(
+                f"Voice '{voice_id}' has no style tensor in the loaded voice pack."
+            )
+        return np.asarray(tensor, dtype=np.float32)
+
+    def resolve_voice_argument(
+        self, voice_id: str | None
+    ) -> tuple[str | np.ndarray, str]:
+        """Resolve a caller-facing id to the argument ``Kokoro.create`` accepts.
+
+        A base voice resolves to its engine key (a string).  A blend resolves to
+        its weighted style tensor (an ``ndarray``), which is the documented
+        ``create()`` input for a designed voice.  The tuple's first element is
+        therefore deliberately ``str | ndarray`` — the orchestrator uses
+        :meth:`resolve_voice` when it needs a stable string identity instead.
+        """
+        engine_key, locale = self.resolve_voice(voice_id)
+        if not engine_key.startswith(BLEND_VOICE_PREFIX):
+            return engine_key, locale
+
+        requested = voice_id or voice_registry.default_voice_id(
+            available=self.engine_voice_ids
+        )
+        record = voice_registry.get_record(requested)
+        if record is None or record.style_type != "blend":  # pragma: no cover
+            raise UnknownVoiceError(
+                f"Voice '{requested}' no longer describes a blend recipe; "
+                "GET /api/tts/voices lists the current voices."
+            )
+        return self.resolve_blend(record.style_spec), record.locale
+
+    # ------------------------------------------------------------------
+    # Blend cache observability
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def blend_cache_size() -> int:
+        """Number of resolved blend tensors currently cached."""
+        return blend_cache_size()
+
+    @staticmethod
+    def blend_cache_bytes() -> int:
+        """Bytes held by the resolved blend tensor cache."""
+        return blend_cache_bytes()
+
+    @staticmethod
+    def clear_blend_cache() -> None:
+        """Drop every resolved blend tensor; recipes are unaffected."""
+        clear_blend_cache()
 
     # ------------------------------------------------------------------
     # Capabilities
@@ -347,11 +583,12 @@ class KokoroEngine:
 
         plan = self.lower(req.direction)
         voice_key, locale = self.resolve_voice(req.voice)
+        voice_arg, _ = self.resolve_voice_argument(req.voice)
         rate = self._rate_for(plan)
 
         samples, sample_rate = self._render(
             req.text,
-            voice=voice_key,
+            voice=voice_arg,
             rate=rate,
             locale=locale,
             is_phonemes=req.is_phonemes,
@@ -382,10 +619,11 @@ class KokoroEngine:
 
         plan = self.lower(req.direction)
         voice_key, locale = self.resolve_voice(req.voice)
+        voice_arg, _ = self.resolve_voice_argument(req.voice)
         rate = self._rate_for(plan)
         samples, sample_rate = self._render(
             text,
-            voice=voice_key,
+            voice=voice_arg,
             rate=rate,
             locale=locale,
             is_phonemes=req.is_phonemes,
@@ -409,7 +647,7 @@ class KokoroEngine:
         self,
         text: str,
         *,
-        voice: str,
+        voice: str | np.ndarray,
         rate: float,
         locale: str,
         is_phonemes: bool,
@@ -473,7 +711,7 @@ class KokoroEngine:
         model,
         text: str,
         *,
-        voice: str,
+        voice: str | np.ndarray,
         rate: float,
         locale: str,
     ) -> tuple[np.ndarray, int]:
