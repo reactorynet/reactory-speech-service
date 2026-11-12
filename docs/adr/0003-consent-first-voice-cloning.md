@@ -1,10 +1,10 @@
-# ADR-0003 — Consent-first voice cloning with watermarking and provenance
+# ADR-0003 — Consent-first voice cloning with provenance and withdrawal
 
-- **Status:** **Proposed** — blocks SPEECH-006. Not accepted until the open questions at the end are answered by the platform owner.
+- **Status:** **Accepted** — decisions recorded 2026-11-12. Unblocks SPEECH-006 subject to the implementation constraints below.
 - **Date:** 2026-11-12
-- **Deciders:** Reactory platform owners; requires a named human approver per voice
+- **Deciders:** Reactory platform owners
 - **Supersedes:** none
-- **Blocks:** SPEECH-006 (`REACTORY-302016408/20261110/166562983`)
+- **Unblocks:** SPEECH-006 (`REACTORY-302016408/20261110/166562983`)
 - **Constrained by:** ADR-0001 (open source, self-hosted, edge-first; permissive licences only)
 
 ## Context
@@ -14,180 +14,208 @@ committed us to permissively licensed, self-hosted engines, and two candidates c
 short reference clip on CPU: Chatterbox (MIT) and Orpheus (Apache-2.0). The engines are not the
 obstacle. Governance is.
 
-The capability creates three distinct exposures that our current architecture cannot answer:
+The capability creates three exposures our current architecture cannot answer:
 
 1. **Consent.** A clip of someone speaking is enough to synthesise new speech in their voice. The
    subject is not a party to our system, cannot revoke anything, and may never learn their voice was
    used. This is unlike every other asset we process, where the data subject is the account holder.
 
-2. **Provenance and deniability.** Once a clone exists, audio generated from it is
-   indistinguishable from that person speaking — absent watermarking. If we cannot show that a
-   given file came from our system, or which consent record authorised it, we cannot answer the
-   first question anyone will ask when something goes wrong: *"did you make this?"*
+2. **Provenance.** Once a clone exists, audio generated from it is indistinguishable from that person
+   speaking. If we cannot show that a given file came from our system and which consent authorised
+   it, we cannot answer the first question anyone asks when something goes wrong: *"did you make
+   this?"*
 
 3. **Irreversible retention.** Reference audio is biometric-adjacent data. It cannot be reissued,
    rotated, or re-derived if leaked. A password breach is recoverable; a voice-clip breach is not.
 
-The existing service already treats voices as registry records with a `style_spec` that names base
-voices or blends of them. Cloning adds a third style type — `reference` — whose content is
-supplied by a customer rather than shipped with the model. That single change moves the service
-from "redistributing a public model's voices" to "storing and reusing a private individual's
-voice". Everything below exists because of that shift.
+The service already treats voices as registry records with a `style_spec` naming base voices or
+blends. Cloning adds a third style type — `reference` — whose content is supplied by a caller rather
+than shipped with the model. That single change moves the service from *"redistributing a public
+model's voices"* to *"reusing a private individual's voice"*. Everything below exists because of
+that shift.
 
-### What this ADR is not
+### Scope boundary: this service does not model identity
 
-It does not decide *whether* to build cloning. It defines the conditions under which the existing
-SPEECH-006 scope may start, and the invariants the implementation must satisfy. If the conditions
-cannot be met, the correct outcome is to leave SPEECH-006 blocked and say so, rather than to
-implement it with the guardrails bolted on afterwards.
+The service does **not** know who is a customer, who is an operator, or who holds which privilege.
+Identity, roles and authorisation are externally managed, and the service cannot distinguish them.
+That decision shapes each control below: the service **records** what it is told and **enforces only
+what it can observe locally**. Where a rule requires knowing who someone is, the enforcement point is
+an external gateway, and this ADR says so explicitly rather than pretending the service enforces it.
 
 ## Decision
 
-Voice cloning may be implemented **only** as consent-first: a clone cannot exist without a consent
-record, cannot be used without a watermark, and cannot outlive its consent. The four invariants:
+### 1. Approval authority is configuration, not code
 
-### 1. A clone cannot be created without a complete consent record
+The set of people who may approve a clone is a **configuration value**, not a hard-coded list and not
+a database table the service owns:
 
-`POST /api/tts/voices/clone` accepts multipart reference audio **and** a structured consent record.
-Incomplete input returns `422` naming each missing field. Required fields:
+- A service config file supplies `clone_approvers: [<email>, ...]` — an **array of email addresses**.
+- This file is **deployed with each service instance and MUST NOT be committed to git.** It joins the
+  existing set of per-deployment settings (model paths, keys) rather than the repository.
+- The service validates at approval time that the supplied approver email is in the configured array.
+  An approver not in the list is a refusal, not a warning.
+- **Self-approval is permitted.** An operator cloning their own voice supplies their own address; if
+  it is in the configured array the record is valid. There is no separate "self" code path — the
+  same check applies, so self-approval is a configured permission rather than a special case.
+- An empty or absent approver config makes cloning **unavailable**, not unrestricted. Fail closed.
 
-| Field | Purpose |
-|---|---|
-| `subjectName` | identifies the natural person whose voice this is |
-| `purpose` | the specific use this clone is authorised for, in free text |
-| `capturedAt` | when consent was obtained |
-| `expiresAt` | when the consent lapses; a clone past this date is inert |
-| `approver` | the named human who accepted the consent, as a user account id |
-| `evidence` | a reference to the consent artefact (signed form id, uploaded document id) |
-| `scope` | surfaces the clone may appear in — not a free-text promise but an enumeration |
+Because identity is external (see scope boundary), the approver field is a **recorded fact the caller
+asserts** and the service checks against local configuration. The service cannot verify that the
+named person actually consented — only that they are permitted to approve.
 
-**Self-consent is allowed and must be recorded as such.** An operator cloning their own voice still
-supplies a record with `subjectName` matching their own identity; the difference is auditable rather
-than implicit. There is no code path that skips the record.
+### 2. Consent evidence is co-located with the voice and signed by the instance
 
-The API must refuse, not warn, on: missing fields, `expiresAt` in the past, an `approver` that is
-not an active user, and a `scope` value outside the enumeration.
+- The consent record is stored **alongside the generated voice**, not in a separate audit system the
+  service cannot reach. If the clone artefact is exported or migrated, its authorising record moves
+  with it.
+- Each record is **signed with the service instance's key at the time of approval**. That signature
+  gives **provenance of the server instance**: it proves *which instance* created this record and
+  that the record has not been altered since.
+- Required fields: `subjectName`, `purpose`, `capturedAt`, `expiresAt`, `approver`, `evidence`
+  (reference to the consent artefact), `scope`, and the instance signature.
 
-### 2. Reference audio is stored encrypted, retained for a stated period, and deletable
+**What this proves and what it does not.** It is a chain-of-custody control: it establishes that a
+specific instance recorded a specific consent at a specific time. It does **not** prove the subject
+consented, and it does not attach to audio after the fact — see the watermark decision below. A
+signed record is only useful when you also hold the file it authorises.
 
-- Reference audio is encrypted at rest with a key that is **not** the same key protecting ordinary
-  application data, so that a database compromise does not also expose voice clips.
-- Retention is bounded and stated in the consent record. The default is the consent expiry; a
-  shorter retention is allowed, a longer one requires a new consent record.
-- `DELETE /api/tts/voices/{id}` on a cloned voice removes, in one transaction or with a recorded
-  partial-failure state: the reference audio, the cached embedding, the registry entry, and any
-  generated preview. Deletion must **not** require the audio to be readable first — a corrupt or
-  missing clip must not block removal of the reference to it.
-- A deletion is soft-deleted in the audit log (who, when, why) while the audio itself is
-  hard-deleted. The audit record must not contain the audio or a hash that could be used to match it.
+### 3. Reference audio is transient: deleted after cloning, 90-day hard ceiling
 
-### 3. Watermarking is on by default and cannot be silently disabled
+- **Default and preferred behaviour: the reference clip is deleted as soon as embedding extraction
+  completes.** A clone is a derived embedding, not a retained recording. This is the intended state
+  for every clone.
+- If an implementation needs to retain the reference — for re-derivation, quality debugging, or a
+  manual review step — retention **must not exceed 90 days**, after which it is deleted
+  automatically, independent of consent expiry. The 90-day ceiling is a hard limit, not a default to
+  be tuned upward.
+- Retention beyond immediate deletion must be recorded on the consent record with a reason, so it is
+  a visible exception rather than an invisible setting.
+- Deletion removes the reference audio, and must succeed when the file is already missing — a corrupt
+  or absent clip must not block removal of the reference to it.
+- Reference audio is encrypted under a key **separate from ordinary application data**, so a database
+  compromise does not also expose voice clips.
 
-- Where the engine supports it, synthesis from a `reference`-style voice applies an imperceptible
-  watermark by default.
-- Disabling it requires an explicit per-deployment setting **and** a per-request justification
-  recorded in the audit log. It is never a silent default and never a query parameter a caller can
-  simply set.
-- If an engine used for cloning cannot watermark, that engine must not be used for cloning. The
-  watermark requirement constrains engine choice; it does not bend to it.
-- We must be able to demonstrate the watermark exists on a generated file. An "on by default" claim
-  with no verification is a policy statement, not a control.
+### 4. Watermarking is a development diagnostic only — no watermark in production audio
 
-### 4. Every use is attributable, and every voice is withdrawable
+**Production audio carries no watermark.** Watermarking is enabled only in development environments,
+where it exists as a diagnostic to confirm the synthesis path is the one you think it is.
 
-- The registry entry for a cloned voice carries: engine, licence, consent record id, `createdAt`,
-  `createdBy`, `approvedBy`. `GET /api/tts/voices/{id}` surfaces all of it.
-- An audit log entry is written for **creation, every synthesis, and deletion**. Synthesis entries
-  record the voice id, consent id and character count — never the text.
-- **Takedown is a registry operation, not a deployment.** Disabling a cloned voice takes effect
-  without a redeploy: a disabled voice returns `404` or `410`, is absent from `/voices`, and any
-  in-flight request fails closed. This mirrors the pack-voice immutability already enforced
-  (deleting a pack voice returns `409`).
-- An expired consent makes the clone inert by the same mechanism as takedown. Expiry is checked at
-  request time, not swept by a background job, because a job that stops running must not silently
-  re-enable its voices.
+This was decided deliberately, and it **removes the technical provenance control** that an earlier
+draft of this ADR proposed making mandatory. The consequence is recorded here rather than left
+implicit:
 
-### Scope of the enumeration (needed by invariant 1)
+- There is **no technical marker in shipped audio** tying a file back to this service. A leaked or
+  disputed file cannot be identified as ours by inspecting it.
+- Provenance therefore rests entirely on the signed consent record (decision 2), which can only be
+  matched to a file when you already hold the file's hash or the file itself.
+- The claim we can make is narrow and should be stated as such: *"if you give us this file and a
+  reason to check, we can look for the authorising record."* We cannot claim *"we can prove any file
+  came from us."*
 
-`scope` values are deliberately not free text, because "authorised for use" is unenforceable if each
-record phrases it differently. Proposed initial set: `internal-only`, `customer-facing-approved`,
-`demo`, `sandbox`. Any surface that renders cloned audio must declare one, and a mismatch between
-the surface's declared scope and the clone's permitted scope is a refusal.
+This is an accepted risk, recorded explicitly. If the risk posture changes — for example a customer
+contract requires detectable provenance — the decision to revisit is this section, not a hidden
+config flag.
+
+### 5. Takedown is a privileged external operation
+
+- The service exposes a takedown operation (disable a clone, delete its artefacts) and **executes it
+  on request**.
+- **Only a privileged account may invoke it.** Because the service cannot model privilege (see scope
+  boundary), that authorisation is enforced **externally**, at the gateway or calling system that
+  fronts this service. The service trusts the assertion it is given.
+- The service must not be exposed directly to untrusted callers for this operation. It is an internal
+  endpoint reached through an authorising layer.
+- The **takedown SLA is owned by external systems.** The service's obligation is bounded and
+  testable: once a takedown has been applied, the voice is inert **immediately and without a
+  redeploy** — `404`/`410`, absent from `/voices`, in-flight requests fail closed.
+- Every takedown records who requested it (the assertion it was given), when, and why. The service
+  records the claim; it does not verify the authority behind it.
+
+### 6. Identity and scope are external; the service records and does not adjudicate
+
+- The service does not model customer, operator, tenant or role. Nothing in the clone path branches
+  on who the caller is.
+- The `scope` field (`internal-only`, `customer-facing-approved`, `demo`, `sandbox`) is **recorded,
+  not enforced by the service**, because enforcing it would require knowing who is asking. Surfaces
+  that render cloned audio are responsible for honouring the scope they are given.
+- An expired consent makes the clone inert by the **same mechanism** as takedown: checked at request
+  time, not swept by a background job, because a job that stops running must not silently re-enable
+  its voices.
 
 ## Consequences
 
-**What becomes possible:** a clone that can be defended. If a generated file is questioned, we can
-produce the consent record, the approver, the watermark, and the synthesis audit entry. That is the
-difference between a capability we can ship and one we cannot.
+**What becomes possible:** a clone with a defensible audit trail — who approved it, on which
+instance, under which stated purpose and scope, and when it expires. That is enough to answer "do
+you have a record for this voice?" and to act on a takedown quickly.
 
-**What becomes slower:** cloning is not a one-call convenience. Creating a usable clone requires a
-consent artefact, an approver, and a scope decision before any audio is synthesised. That friction
-is the control — removing it is the same as removing the control.
+**What we cannot claim:** that shipped audio is detectably ours, or that we verified the subject's
+consent. Both rest on external processes and signed records rather than on the audio itself. Any
+customer-facing statement about provenance must be written to that limit.
 
-**What becomes constrained:** engine choice is narrowed to engines that watermark. If neither
-Chatterbox nor Orpheus reliably watermarks on CPU, SPEECH-006 has no compliant engine and must not
-ship until one exists. This must be verified, not assumed.
+**What becomes slower:** creating a usable clone needs an approver from a deployed config plus a
+complete consent record before any synthesis. That friction is the control.
 
-**What we are choosing to make hard:** bulk cloning. The design deliberately has no endpoint that
-creates many clones from a manifest, because the plausible use case for that is the one we least
-want to enable.
+**What we are choosing not to build:** bulk cloning. There is deliberately no endpoint that creates
+many clones from a manifest, because the plausible use for that is the one we least want to enable.
 
 **Residual risk we accept:** a determined party with enough reference audio and a local model can
 clone anyone, with or without this service. Nothing here prevents that. What it prevents is *our
-service* becoming the convenient, auditable-looking path to do it. We should not claim more than
-that.
+service* becoming the convenient, auditable-looking path.
 
 ## Rejected alternatives
 
-**Rely on terms of service alone.** A prohibition without a technical control is a statement of
-intent, not a safeguard. Every parameter is optional in practice if the API does not refuse.
+**Approver list in code or in the database.** A committed list is public and stale on redeploy; a
+database table puts approval authority inside the system whose authority is being checked. A
+deployed config file separates them.
 
-**Watermarking as an option, defaulting off.** Watermarking that can be quietly turned off protects
-nobody, and cannot be cited as a mitigation after an incident.
+**Retaining reference audio by default.** Default retention turns a bounded consent into an
+indefinite biometric store. Deletion after extraction is the default because the embedding is what
+the clone needs.
 
-**Unbounded retention of reference audio.** Keeping clips indefinitely "for quality" converts a
-bounded consent into an indefinite biometric store. The quality argument does not survive the
-breach scenario.
+**Mandatory production watermarking.** Rejected by the platform owner: production audio must be
+clean. Recorded above as an accepted risk with its consequence stated, rather than implemented
+half-heartedly or silently dropped.
 
-**Cloning via a hosted provider.** Violates ADR-0001, and moves the consent problem to a third party
-who has no relationship with the subject.
+**Service-side role checks.** The service cannot distinguish a customer from an operator, so a
+role check inside the service would be a check against nothing. Authorisation belongs at the gateway.
 
-**Ship cloning first, add governance later.** Not possible in the order promised: the first cloned
-voice would exist without a consent record, and the retrofit would have to decide what to do about
-clones already in use. There is no clean migration from "ungoverned" to "governed" for this data.
+**Ship cloning first, add governance later.** Not possible in the promised order: the first clone
+would exist without a consent record, and the retrofit would have to decide what to do about clones
+already in use.
 
 ## Verification plan
 
-These are the checks that make the invariants measurable rather than aspirational:
+These make the invariants measurable rather than aspirational:
 
-1. `422` for each individually missing consent field; a test per field, not one combined test.
-2. `422` for `expiresAt` in the past, an inactive `approver`, and an out-of-enumeration `scope`.
-3. A clone synthesised through the ordinary `/synthesize` path with no special case in the API.
-4. Deletion removes audio, embedding, registry entry and preview; a test that asserts the audio file
-   is gone from disk, and one where the audio file is already missing (deletion must still succeed).
-5. Watermark present on generated audio, verified by an actual detector or extractor, with a test
-   that fails if watermarking is disabled without the recorded justification.
-6. A disabled clone returns `404`/`410` and is absent from `/voices`; an expired clone does the same.
-7. Audit entries exist for create/use/delete; a synthesis audit entry contains the character count
-   and **does not** contain the text (asserted, not reviewed by eye).
-8. Startup with a corrupt consent store degrades to "no clones" rather than failing to boot — the
-   same tolerance the designed-voice store already has.
+1. An approver **not** in the deployed config is refused; one **in** the config is accepted; an
+   **absent/empty** config makes cloning unavailable rather than unrestricted.
+2. A missing field returns `422` naming each field individually — a test per field.
+3. An `expiresAt` in the past is refused at creation; an expired clone is inert at synthesis.
+4. The consent record is stored alongside the voice artefact and carries an instance signature;
+   a test asserts the signature verifies against the instance key and that tampering invalidates it.
+5. Reference audio is **absent from disk** after a successful clone by default; with retention
+   enabled it is present and removed at the 90-day boundary (clock-injected test, not a real wait).
+6. Deletion succeeds when the reference file is already missing.
+7. A disabled clone returns `404`/`410`, is absent from `/voices`, and an in-flight request fails
+   closed — tested without a service restart.
+8. Synthesising with a clone works through the ordinary `/synthesize` path with no special case.
+9. **No watermark is present in production-mode output** — asserted positively, so the decision is
+   enforced rather than assumed. A dev-mode test asserts the watermark *is* present.
+10. Audit entries exist for create, use and takedown; a synthesis entry contains the character count
+    and **does not** contain the text (asserted, not reviewed by eye).
+11. Startup with a corrupt consent store degrades to "no clones" rather than failing to boot — the
+    same tolerance the designed-voice store already has.
 
-## Open questions — must be answered before status becomes Accepted
+## Implementation notes for SPEECH-006
 
-1. **Who is the named human approver**, and is one person sufficient, or is a second reviewer
-   required for `customer-facing-approved` scope?
-2. **Where does consent evidence live**, and who can audit it? A reference id is only useful if the
-   artefact behind it is retained and retrievable.
-3. **What is the retention period** for reference audio, and does it differ by scope? The ADR
-   proposes consent-expiry as the default ceiling; the owner must confirm or override.
-4. **Does the watermark survive** the audio pipeline end-to-end — encode, transcode, and playback on
-   the surfaces in `scope`? This is an empirical question that must be answered with the chosen
-   engine before SPEECH-006 starts, because it determines whether a compliant engine exists at all.
-5. **What is the takedown SLA**, and who executes it? "Without a redeploy" is a technical property;
-   it still needs an owner and a time bound.
-6. **Does cloning customer reference audio change our data-processing posture enough** to require a
-   privacy review or a DPA change? If yes, that review precedes implementation, not follows it.
-
-Until questions 1, 3, 4 and 5 are answered, SPEECH-006 remains blocked regardless of engineering
-readiness.
+- The deployed approver config joins the existing per-instance settings; it must be added to
+  `.gitignore` and documented in the operations section so an operator knows to supply it. A clone
+  endpoint that silently cannot approve anyone is a support incident waiting to happen.
+- Because reference audio is deleted after extraction by default, the clone must be re-derivable
+  only from the embedding. Do not design a "re-clone from reference" flow that assumes the clip is
+  still there.
+- The takedown endpoint must be documented as **internal-only, behind the authorising gateway**. An
+  exposed takedown is worse than no takedown.
+- Engine choice is now unconstrained by watermarking. Chatterbox (MIT) and Orpheus (Apache-2.0) both
+  remain acceptable on licence grounds; the remaining question is CPU feasibility, which SPEECH-006
+  must measure rather than assume.
