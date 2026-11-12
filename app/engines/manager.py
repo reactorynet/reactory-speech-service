@@ -79,6 +79,9 @@ class EngineManager:
         #: the actionable detail (model path, download command) instead of a
         #: generic "could not be loaded" that only the log ever explains.
         self._load_errors: dict[str, BaseException] = {}
+        #: engine id -> monotonic time before which a retry is pointless.
+        self._load_retry_at: dict[str, float] = {}
+        self._load_retry_seconds = float(settings.speech_engine_load_retry_seconds)
         for engine in engines or ():
             self.register(engine)
 
@@ -271,18 +274,44 @@ class EngineManager:
         except EngineUnavailableError as exc:
             # An expected, operator-actionable state: log it once, not per
             # request, and never with a traceback.
-            self._load_errors[engine_id] = exc
+            self._record_load_failure(engine_id, exc)
             if previously_failed:
                 logger.debug("TTS engine '%s' is still unavailable: %s", engine_id, exc)
             else:
                 logger.warning("TTS engine '%s' is unavailable: %s", engine_id, exc)
         except Exception as exc:
-            self._load_errors[engine_id] = exc
+            self._record_load_failure(engine_id, exc)
             logger.exception("Failed to initialise TTS engine '%s'", engine_id)
         else:
             self._load_errors.pop(engine_id, None)
+            self._load_retry_at.pop(engine_id, None)
         finally:
             self._loading.discard(engine_id)
+
+    def _record_load_failure(self, engine_id: str, exc: BaseException) -> None:
+        """Remember a failure and start the retry backoff for it."""
+        self._load_errors[engine_id] = exc
+        if self._load_retry_seconds > 0:
+            self._load_retry_at[engine_id] = self._clock() + self._load_retry_seconds
+        else:
+            self._load_retry_at.pop(engine_id, None)
+
+    def _raise_if_retry_pending(self, engine_id: str) -> None:
+        """Fail fast instead of re-attempting a load that just failed.
+
+        Without this, every request routed to a broken optional engine paid the
+        full preflight (up to ~3 GB of hashing on the first failure, memoised
+        afterwards) plus the ~22 s backend construction, serially under the engine
+        lock, before falling back.
+        """
+        cause = self._load_errors.get(engine_id)
+        retry_at = self._load_retry_at.get(engine_id)
+        if cause is None or retry_at is None or self._clock() >= retry_at:
+            return
+        raise EngineUnavailableError(
+            f"TTS engine '{engine_id}' is unavailable: {cause} "
+            f"(retrying in {retry_at - self._clock():.0f}s)"
+        ) from cause
 
     def last_load_error(self, engine_id: str) -> BaseException | None:
         """The cause of the most recent failed load for one engine, if any."""
@@ -304,6 +333,17 @@ class EngineManager:
             if self.is_ready(engine_id):
                 self.touch(engine_id)
                 return engine
+            self._raise_if_retry_pending(engine_id)
+            # Preflight *before* eviction.  A lazy engine whose weights are absent
+            # must not cost a healthy resident engine its slot: `_make_room`
+            # would unload idle Kokoro, the load would then fail, and the
+            # fallback would reload Kokoro from cold — on every request.
+            try:
+                self._preflight(engine_id)
+            except EngineUnavailableError as exc:
+                raise EngineUnavailableError(
+                    f"TTS engine '{engine_id}' could not be loaded on this deployment: {exc}"
+                ) from exc
             self.reap_idle()
             self._make_room(engine_id)
             await self._load(engine_id)
@@ -315,6 +355,29 @@ class EngineManager:
                 ) from cause
             self.touch(engine_id)
             return engine
+
+    def _preflight(self, engine_id: str) -> None:
+        """Ask an adapter whether it could load, without loading or evicting.
+
+        Duck-typed: adapters that expose no ``preflight`` are assumed viable, so
+        this changes nothing for Kokoro or for test doubles.  A refusal is
+        recorded as the engine's current failure, so the caller gets the same
+        actionable cause and the retry backoff applies to it.
+        """
+        engine = self.require(engine_id)
+        check = getattr(engine, "preflight", None)
+        if not callable(check):
+            return
+        try:
+            check()
+        except EngineUnavailableError as exc:
+            first_failure = engine_id not in self._load_errors
+            self._record_load_failure(engine_id, exc)
+            if first_failure:
+                logger.warning("TTS engine '%s' is unavailable: %s", engine_id, exc)
+            else:
+                logger.debug("TTS engine '%s' is still unavailable: %s", engine_id, exc)
+            raise
 
     def _make_room(self, engine_id: str) -> None:
         """Evict idle engines until a slot is free.
@@ -488,6 +551,9 @@ class EngineManager:
                 "max_concurrency": limiter["max_concurrency"],
                 "peak_concurrency": limiter["peak_concurrency"],
                 "idle_seconds": None if last_used is None else round(max(0.0, now - last_used), 3),
+                "retry_in_seconds": round(max(0.0, self._load_retry_at.get(engine_id, 0.0) - now), 1)
+                if engine_id in self._load_retry_at
+                else None,
                 "gpu_required": capabilities.gpu_required if capabilities else False,
                 "max_chars": capabilities.max_chars if capabilities else None,
                 "voices": _safe_voice_count(engine),

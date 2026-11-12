@@ -33,7 +33,6 @@ Binding constraints for this module:
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import inspect
 import json
@@ -141,6 +140,25 @@ CHUNK_GAP_SECONDS = 0.08
 #: this engine is for batch narration, not interactive turns.  Thread scaling is
 #: flat because the bottleneck is sequential token decoding, so the advisory
 #: deliberately does not recommend adding threads.
+#: Capability notes shared by every deployment.  Written as explicit ``+``
+#: concatenations rather than adjacent literals inside the ``capability_notes``
+#: list: adjacent literals there are indistinguishable from a missing comma and
+#: are flagged by static analysis (CodeQL ``py/implicit-string-concatenation-in-list``).
+_CLONING_NOTE = (
+    "Chatterbox supports zero-shot cloning, but this service does not expose it yet "
+    + "(SPEECH-006, gated on ADR-0003). supports_cloning is therefore false."
+)
+_WATERMARK_NOTE = (
+    "Production audio carries no Perth watermark: the adapter replaces the model "
+    + "watermarker with a no-op (ADR-0003 decision 4)."
+)
+_EXAGGERATION_NOTE = (
+    "exaggeration is bounded to 0.3-0.7; prosody.rate is never stacked on top of it "
+    + "because the two co-vary."
+)
+_NO_EXAGGERATION_NOTE = "This variant ignores exaggeration, so no style is applied."
+_STREAMING_NOTE = "Chatterbox renders a complete buffer; it does not stream incrementally."
+
 COMPUTE_COST_ADVISORY: dict[str, Any] = {
     "measured_realtime_factor": 0.13,
     "speed_vs_realtime": "0.13x realtime (about 7.7x slower than realtime)",
@@ -262,12 +280,17 @@ VARIANT_REQUIRED_BYTES: dict[str, int] = {
 }
 
 MANIFEST_NAME = "manifest.json"
-WEIGHT_SUFFIXES = (".safetensors", ".pt", ".pth", ".bin", ".ckpt")
 
-#: Per-process memo of verified model directories, keyed by
-#: ``(resolved root, verification signature)``.  See
-#: :meth:`ChatterboxModelStore.verify`.
-_VERIFIED_MODELS: dict[tuple, bool] = {}
+#: Per-process memo of verification results, keyed by
+#: ``(resolved root, variant, verification signature)``.  The value is
+#: ``(ok, detail)`` where ``detail`` names the first failing file.
+#:
+#: Both outcomes are cached, not just success.  A truncated weight file would
+#: otherwise re-hash ~3 GB on every request that routes to the engine, under the
+#: engine lock, before falling back to Kokoro.  The key includes size and
+#: ``mtime_ns`` of every recorded file plus the manifest's own mtime, so fixing
+#: or replacing a file changes the key and forces a re-check.
+_VERIFIED_MODELS: dict[tuple, tuple[bool, str | None]] = {}
 
 
 def _human_bytes(value: int | None) -> str:
@@ -424,38 +447,91 @@ class ChatterboxModelStore:
             tuple(parts),
         )
 
-    def verify(self, manifest: dict[str, Any] | None = None) -> bool:
-        """Whether every recorded file is present and matches its SHA-256.
+    def manifest_problems(self, manifest: dict[str, Any]) -> list[str]:
+        """Reasons this manifest cannot vouch for *this* store's model.
 
-        The result is memoised per process against
-        :meth:`verification_signature`.  Hashing 3.19 GB costs seconds, and an
-        engine that is idle-unloaded and reloaded must not pay it again while the
-        files are demonstrably unchanged.
+        Two independent checks, both of which the manager previously missed:
+
+        * **variant identity.**  Both variants default to the same models
+          directory.  Downloading turbo over a directory that already holds
+          standard rewrites ``manifest.json`` with turbo's file list, while the
+          standard files remain on disk.  Without this check the store would
+          accept that directory, hash only turbo's entries, and load a standard
+          ``t3_cfg.safetensors``/``s3gen.safetensors`` that no recorded hash
+          covers.
+        * **complete coverage.**  Every name in :attr:`required_files` must have
+          a manifest entry.  Hashing "whatever the manifest happens to list" is
+          not verification: the files the engine actually reads are the ones that
+          have to be covered.
+        """
+        problems: list[str] = []
+        declared = str(manifest.get("variant") or "")
+        if declared != self.variant:
+            problems.append(
+                f"{MANIFEST_NAME} describes variant {declared or '<unset>'!r} but this store "
+                f"requires {self.variant!r}; do not share one models directory between variants "
+                "(or pass --force to the download command to overwrite it deliberately)"
+            )
+        files = manifest.get("files")
+        if not isinstance(files, dict) or not files:
+            problems.append(f"{MANIFEST_NAME} records no weight files")
+            return problems
+        missing_entries = [name for name in self.required_files if name not in files]
+        if missing_entries:
+            problems.append(
+                f"{MANIFEST_NAME} has no SHA-256 entry for required file(s): "
+                + ", ".join(missing_entries)
+            )
+        return problems
+
+    def _check_files(self, manifest: dict[str, Any]) -> str | None:
+        """Hash every required file once; return the first failure or ``None``."""
+        files = manifest.get("files") or {}
+        for name in self.required_files:
+            entry = files.get(name) or {}
+            path = self.root / name
+            if not path.is_file():
+                return f"recorded weight file '{name}' is missing"
+            expected = str(entry.get("sha256") or "")
+            actual = self.sha256(path)
+            if not expected:
+                return f"'{name}' has no recorded SHA-256"
+            if actual != expected:
+                return (
+                    f"'{name}' failed SHA-256 verification (expected {expected}, got {actual}); "
+                    "the file is corrupt or was replaced"
+                )
+        return None
+
+    def verification_result(self, manifest: dict[str, Any] | None = None) -> tuple[bool, str | None]:
+        """``(ok, detail)`` for one manifest, memoised on the file signature.
+
+        ``detail`` names the first failing file.  Returning it means
+        :meth:`ensure_available` can build its message without hashing anything a
+        second time.
         """
         manifest = manifest if manifest is not None else self.read_manifest()
         if manifest is None:
-            return False
-        files = manifest.get("files")
-        if not isinstance(files, dict) or not files:
-            return False
-        signature = self.verification_signature(manifest)
-        cache_key = (str(self.root.resolve()), signature)
+            return False, f"{MANIFEST_NAME} is missing or unreadable"
+        problems = self.manifest_problems(manifest)
+        if problems:
+            return False, "; ".join(problems)
+        cache_key = (
+            str(self.root.resolve()),
+            self.variant,
+            self.verification_signature(manifest),
+        )
         cached = _VERIFIED_MODELS.get(cache_key)
         if cached is not None:
             return cached
-        verified = True
-        for name, entry in files.items():
-            path = self.root / str(name)
-            if not path.is_file():
-                verified = False
-                break
-            expected = str((entry or {}).get("sha256") or "")
-            if not expected or self.sha256(path) != expected:
-                verified = False
-                break
-        if verified:
-            _VERIFIED_MODELS[cache_key] = True
-        return verified
+        detail = self._check_files(manifest)
+        result = (detail is None, detail)
+        _VERIFIED_MODELS[cache_key] = result
+        return result
+
+    def verify(self, manifest: dict[str, Any] | None = None) -> bool:
+        """Whether every required file is present and matches its SHA-256."""
+        return self.verification_result(manifest)[0]
 
     def is_verified(self) -> bool:
         """Whether every recorded file is present and matches its SHA-256."""
@@ -467,9 +543,32 @@ class ChatterboxModelStore:
         The message names the directory and the exact command to run, because
         "model not found" on its own is a support incident: this engine is
         optional and its weights are never fetched at image build time.
+
+        Also the engine's cheap viability check before the manager evicts
+        anything: a missing or mismatched model is detected here, by ``stat`` and
+        one memoised hashing pass, instead of after a healthy engine has already
+        been unloaded.
         """
         if not self.root.is_dir():
             raise ChatterboxModelMissing(self._missing_message("the model directory does not exist"))
+        manifest = self.read_manifest()
+        if manifest is None:
+            raise ChatterboxModelMissing(
+                self._missing_message(
+                    f"{MANIFEST_NAME} is missing or unreadable, so the licence, the variant and "
+                    "the SHA-256 of each file cannot be verified"
+                )
+            )
+        if str(manifest.get("license") or "") != CHATTERBOX_LICENSE:
+            raise ChatterboxModelMissing(
+                self._missing_message(
+                    f"{MANIFEST_NAME} records licence {manifest.get('license')!r}; "
+                    f"only {CHATTERBOX_LICENSE} is permitted (ADR-0001)"
+                )
+            )
+        problems = self.manifest_problems(manifest)
+        if problems:
+            raise ChatterboxModelMissing(self._missing_message("; ".join(problems)))
         missing = self.missing_files()
         if missing:
             raise ChatterboxModelMissing(
@@ -480,40 +579,10 @@ class ChatterboxModelStore:
                     "run the download command to fetch exactly what from_local reads)"
                 )
             )
-        manifest = self.read_manifest()
-        if manifest is None:
-            raise ChatterboxModelMissing(
-                self._missing_message(
-                    f"{MANIFEST_NAME} is missing or unreadable, so the licence and SHA-256 "
-                    "cannot be verified"
-                )
-            )
-        if str(manifest.get("license") or "") != CHATTERBOX_LICENSE:
-            raise ChatterboxModelMissing(
-                self._missing_message(
-                    f"{MANIFEST_NAME} records licence {manifest.get('license')!r}; "
-                    f"only {CHATTERBOX_LICENSE} is permitted (ADR-0001)"
-                )
-            )
-        if self.verify(manifest):
-            return manifest
-        # Verification failed; name the offending file for the operator.
-        for name, entry in (manifest.get("files") or {}).items():
-            path = self.root / str(name)
-            if not path.is_file():
-                raise ChatterboxModelMissing(
-                    self._missing_message(f"recorded weight file '{name}' is missing")
-                )
-            expected = str((entry or {}).get("sha256") or "")
-            actual = self.sha256(path)
-            if not expected or actual != expected:
-                raise ChatterboxModelMissing(
-                    self._missing_message(
-                        f"'{name}' failed SHA-256 verification (expected {expected or 'none'}, "
-                        f"got {actual}); the file is corrupt or was replaced"
-                    )
-                )
-        raise ChatterboxModelMissing(self._missing_message("weights did not verify"))
+        ok, detail = self.verification_result(manifest)
+        if not ok:
+            raise ChatterboxModelMissing(self._missing_message(detail or "weights did not verify"))
+        return manifest
 
     def _missing_message(self, reason: str) -> str:
         command = (
@@ -536,6 +605,7 @@ def download_model(
     repo_id: str | None = None,
     revision: str | None = None,
     token: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Download exactly the weights ``from_local`` reads, and record provenance.
 
@@ -549,6 +619,19 @@ def download_model(
     ``from_local`` reads 3.19 GB.
     """
     store = ChatterboxModelStore(root, variant=variant)
+    existing = store.read_manifest()
+    if existing is not None and not force:
+        declared = str(existing.get("variant") or "")
+        if declared and declared != variant:
+            raise ChatterboxModelMissing(
+                store._missing_message(
+                    f"this directory already holds the {declared!r} variant. Downloading "
+                    f"{variant!r} over it would rewrite {MANIFEST_NAME} while leaving the other "
+                    "variant's checkpoints on disk, so the store would load files no recorded "
+                    "hash covers. Use a separate --models-dir per variant, or pass --force to "
+                    "overwrite deliberately"
+                )
+            )
     store.root.mkdir(parents=True, exist_ok=True)
     try:
         from huggingface_hub import snapshot_download
@@ -776,8 +859,37 @@ def exaggeration_for(style: str | None, intensity: float | None) -> float | None
     return round(max(EXAGGERATION_MIN, min(EXAGGERATION_MAX, base)), 3)
 
 
+#: Where a hard split may fall, in order of preference.  Splitting mid-word
+#: renders ``'exagge' | 'ration'`` as two utterances with an audible gap, which
+#: unpunctuated transcript text hits constantly.
+_SPLIT_POINTS = (" ", ",", ";", ":")
+
+
+def _hard_split(piece: str, limit: int) -> tuple[str, str]:
+    """Split ``piece`` at the last word boundary before ``limit``.
+
+    Returns ``(head, tail)`` with ``head`` non-empty.  Falls back to a raw cut
+    when the piece has no boundary to split on (a single very long token, a
+    language without spaces).
+    """
+    window = piece[:limit]
+    best = max((window.rfind(mark) for mark in _SPLIT_POINTS), default=-1)
+    if best > 0:
+        # Keep the separator with the head so the pause is not lost, and drop the
+        # space so the next chunk does not start with whitespace.
+        head = piece[: best + 1]
+        tail = piece[best + 1 :].lstrip()
+        return head.rstrip(), tail
+    return piece[:limit], piece[limit:]
+
+
 def _chunk_text(text: str, *, limit: int = MAX_CHARS_PER_CALL) -> list[str]:
-    """Split text into chunks of at most ``limit`` characters at sentence ends."""
+    """Split text into chunks of at most ``limit`` characters.
+
+    Boundaries are preferred in this order: sentence end, then the last space or
+    comma before the limit, then — only if there is no boundary at all — a raw
+    cut.  Every chunk is guaranteed to be at most ``limit`` characters.
+    """
     text = text.strip()
     if len(text) <= limit:
         return [text] if text else []
@@ -792,12 +904,12 @@ def _chunk_text(text: str, *, limit: int = MAX_CHARS_PER_CALL) -> list[str]:
         if current:
             chunks.append(current)
         while len(sentence) > limit:
-            chunks.append(sentence[:limit])
-            sentence = sentence[limit:]
+            head, sentence = _hard_split(sentence, limit)
+            chunks.append(head)
         current = sentence
     if current:
         chunks.append(current)
-    return chunks
+    return [chunk for chunk in chunks if chunk]
 
 
 def _to_numpy(wav) -> np.ndarray:
@@ -903,14 +1015,26 @@ class ChatterboxEngine:
             return
         await asyncio.to_thread(self.load)
 
-    def load(self) -> None:
-        """Load the backend, with every failure mapped to a clear fallback error."""
-        if not settings.chatterbox_enabled:
-            raise ChatterboxError(
-                "Chatterbox is disabled (CHATTERBOX_ENABLED=false); it is not registered "
-                "and should never be loaded."
-            )
+    def preflight(self) -> None:
+        """Cheap viability check, run by the manager before it evicts anything.
 
+        Only the model directory, the manifest and one memoised hashing pass; no
+        torch import and no model construction.  Raising here means a request for
+        an unservable engine fails *before* a healthy engine is unloaded, so the
+        fallback does not have to reload Kokoro from cold.
+        """
+        self._store.ensure_available()
+
+    def load(self) -> None:
+        """Load the backend, with every failure mapped to a clear fallback error.
+
+        Deliberately does **not** consult ``CHATTERBOX_ENABLED``.  Registration is
+        the gate: ``TTSService`` only registers this engine when the flag is on,
+        and an explicit ``TTSService(expressive=True)`` must remain loadable even
+        on a process whose environment says otherwise.  A second check here made
+        such an engine advertise itself in ``/capabilities`` and get style-routed
+        while being unable to ever load.
+        """
         # Weights first: on a deployment without the model this fails in
         # milliseconds with an actionable message, before importing torch.
         self._store.ensure_available()
@@ -999,6 +1123,20 @@ class ChatterboxEngine:
     def voices(self) -> list[VoiceDescriptor]:
         return build_catalogue(self.available_voice_ids(), engine=self.id)
 
+    def can_render_voice(self, voice_id: str) -> bool:
+        """Whether *this deployed variant* can render ``voice_id``.
+
+        The service uses this instead of comparing engine ids, so pinning the
+        other Chatterbox variant's voice degrades to the deployed variant's own
+        default voice (reported in ``ignored``) rather than returning a 422 that
+        the flag-off path would not produce.
+        """
+        record = voice_registry.get_record(voice_id)
+        if record is None or record.engine != self.id:
+            return False
+        declared = str(record.style_spec.get("variant") or "standard").lower()
+        return declared == self.variant
+
     def get_voice(self, voice_id: str) -> VoiceDescriptor | None:
         if voice_id not in self.available_voice_ids():
             return None
@@ -1085,15 +1223,10 @@ class ChatterboxEngine:
             compute_cost=dict(COMPUTE_COST_ADVISORY),
             capability_notes=[
                 *([self.style_caveat] if self.style_caveat else []),
-                "Chatterbox supports zero-shot cloning, but this service does not expose it "
-                "yet (SPEECH-006, gated on ADR-0003). supports_cloning is therefore false.",
-                "Production audio carries no Perth watermark: the adapter replaces the "
-                "model watermarker with a no-op (ADR-0003 decision 4).",
-                "exaggeration is bounded to 0.3-0.7; prosody.rate is never stacked on top "
-                "of it because the two co-vary."
-                if self.supports_exaggeration
-                else "This variant ignores exaggeration, so no style is applied.",
-                "Chatterbox renders a complete buffer; it does not stream incrementally.",
+                _CLONING_NOTE,
+                _WATERMARK_NOTE,
+                _EXAGGERATION_NOTE if self.supports_exaggeration else _NO_EXAGGERATION_NOTE,
+                _STREAMING_NOTE,
             ],
             supports_paralinguistic_tags=list(PARALINGUISTIC_TAGS),
         )
@@ -1392,39 +1525,3 @@ __all__ = [
     "neutralise_watermarker",
     "sanitise_text",
 ]
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Operator entry point: download the optional weights on demand."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Download Chatterbox weights into the models volume and record the licence "
-            "and SHA-256. Never run at container build time."
-        )
-    )
-    parser.add_argument("--download", action="store_true", help="download the weights")
-    parser.add_argument("--variant", default="standard", choices=sorted(VARIANT_REPOS))
-    parser.add_argument("--models-dir", default=None, help="defaults to CHATTERBOX_MODEL_DIR")
-    parser.add_argument("--repo-id", default=None, help="override the upstream repository")
-    parser.add_argument("--revision", default=None, help="pin an upstream revision")
-    args = parser.parse_args(argv)
-
-    if not args.download:
-        parser.print_help()
-        return 0
-
-    root = args.models_dir or str(settings.chatterbox_model_dir_resolved)
-    manifest = download_model(
-        root, variant=args.variant, repo_id=args.repo_id, revision=args.revision
-    )
-    print(
-        f"Chatterbox {args.variant} recorded in {root}: "
-        f"{len(manifest['files'])} file(s), licence {manifest['license']}, "
-        f"attribution {manifest['attribution']}"
-    )
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover - operator entry point
-    raise SystemExit(main())
-

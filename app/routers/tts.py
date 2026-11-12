@@ -24,6 +24,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from app.core.contracts import Direction, DirectionPlan
@@ -357,25 +358,48 @@ async def get_voice(voice_id: str, request: Request) -> VoiceInfo:
     return VoiceInfo(**voice)
 
 
-@router.get(
-    "/capabilities",
-    response_model=CapabilitiesResponse,
-    # Optional keys (compute_cost, capability_notes, ...) are omitted when an
-    # engine has none, so the default Kokoro payload is byte-for-byte the shape
-    # it had before the expressive engine existed.
-    response_model_exclude_none=True,
+#: Keys this change added to an engine's capability row.  They are dropped from a
+#: row when their value is ``None`` so an engine that does not declare them (every
+#: Kokoro row) keeps exactly the payload shape it had before the expressive engine
+#: existed.  Deliberately an explicit list rather than
+#: ``response_model_exclude_none=True``: that option also removes pre-existing
+#: ``None`` values — ``default_voice`` and the ``caveat: null`` entries inside
+#: ``language_support`` / ``languages_with_caveats`` — which would change the
+#: existing response for every client.
+_ADDITIVE_ENGINE_KEYS: tuple[str, ...] = (
+    "attribution",
+    "variant",
+    "compute_cost",
+    "capability_notes",
+    "supports_paralinguistic_tags",
+    "supports_exaggeration",
 )
-async def capabilities(request: Request) -> CapabilitiesResponse:
+
+
+@router.get("/capabilities", response_model=CapabilitiesResponse)
+async def capabilities(request: Request) -> CapabilitiesResponse | JSONResponse:
     """Report the capability matrix of every TTS engine in this deployment.
 
     With the expressive engine registered, its row carries a measured
     ``compute_cost`` advisory: at RTF 0.13 the routing signal is cost per second
     of audio, not ``native_rate``.
+
+    The payload is pruned by :data:`_ADDITIVE_ENGINE_KEYS` rather than by
+    excluding every ``None``, so adding those keys did not alter the existing
+    Kokoro row (see ``test_capabilities_flag_off_payload_is_unchanged``).
     """
     tts_service = request.app.state.tts_service
-    return CapabilitiesResponse(
+    response = CapabilitiesResponse(
         engines=[EngineCapabilities(**row) for row in tts_service.capability_matrix()]
     )
+    payload = response.model_dump()
+    pruned = False
+    for row in payload["engines"]:
+        for key in _ADDITIVE_ENGINE_KEYS:
+            if key in row and row[key] is None:
+                del row[key]
+                pruned = True
+    return JSONResponse(content=payload) if pruned else response
 
 
 # ─────────────────────────────────────────────────────────────
@@ -680,25 +704,49 @@ async def tts_stream(websocket: WebSocket) -> None:
                 if custom_lexicon is not None:
                     kwargs["custom_lexicon"] = custom_lexicon
 
+                # The engine that renders a stream can differ from the one the
+                # pre-computed plan named: a Chatterbox stream whose weights are
+                # absent falls back to Kokoro, which then also has to use its own
+                # default voice.  ``report`` is filled in by the orchestrator so the
+                # completion frame can say what actually happened instead of
+                # describing the plan.
+                report: dict = {}
                 async for wav_chunk, duration in tts_service.synthesize_streaming_async(
                     text,
                     voice=voice,
                     speed=speed,
                     engine=engine_override,
                     direction=effective_direction,
+                    report=report,
                     **kwargs,
                 ):
                     await websocket.send_bytes(wav_chunk)
                     total_duration += duration
 
+                actual_engine = report.get("engine") or plan.engine
+                ignored = list(plan.ignored)
+                if report.get("voice_substituted") and "voice" not in ignored:
+                    ignored.append("voice")
+                warnings = [*plan.warnings, *report.get("voice_notes", [])]
+                if report.get("fallback_reason"):
+                    warnings.append(
+                        f"engine '{plan.engine}' was unavailable "
+                        f"({report['fallback_reason']}); streamed with '{actual_engine}'"
+                    )
+                if report.get("engine") and plan.engine and actual_engine != plan.engine:
+                    if "engine" not in ignored:
+                        ignored.append("engine")
+
                 await websocket.send_json(
                     {
                         "done": True,
                         "total_duration": round(total_duration, 3),
-                        "engine": plan.engine,
+                        "engine": actual_engine,
+                        "engine_planned": plan.engine,
+                        "voice": report.get("voice", voice),
                         "direction_applied": plan.applied,
-                        "direction_ignored": plan.ignored,
-                        "direction_warnings": plan.warnings,
+                        "direction_ignored": ignored,
+                        "direction_warnings": warnings,
                     }
                 )
             except ValueError as e:

@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     speech_max_loaded_engines: int = 2
     speech_engine_idle_timeout_seconds: float = 300.0
     speech_engine_reaper_interval_seconds: float = 30.0
+    #: After a load failure, do not retry that engine for this long.  A broken
+    #: optional engine (absent weights, broken torch/perth install) would
+    #: otherwise repeat its whole preflight + construction on every request that
+    #: routes to it, under the engine lock, before falling back.  Set to 0 to
+    #: disable the backoff.
+    speech_engine_load_retry_seconds: float = 30.0
 
     # TTS synthesis cache (Phase 3).  Two tiers: an in-process LRU for hot
     # phrases plus a TTL-bounded disk cache for longer text and previews.  Both

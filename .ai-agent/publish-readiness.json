@@ -1,0 +1,13 @@
+{
+  "state": "ok",
+  "detail": "",
+  "base": "master",
+  "baseResolved": true,
+  "commitsAhead": 1,
+  "committed": true,
+  "commitReason": "",
+  "commitError": null,
+  "commitVerification": "not_checked",
+  "worktreeDirty": false,
+  "checkedAt": "2026-11-12T13:31:08.452Z"
+}

@@ -46,11 +46,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo-id", default=None, help="Override the upstream repository")
     parser.add_argument("--revision", default=None, help="Pin an upstream revision")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "overwrite a models directory that already holds a different variant "
+            "(the default refuses, because the two variants share file names)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     root = args.models_dir or str(settings.chatterbox_model_dir_resolved)
     manifest = download_model(
-        root, variant=args.variant, repo_id=args.repo_id, revision=args.revision
+        root,
+        variant=args.variant,
+        repo_id=args.repo_id,
+        revision=args.revision,
+        force=args.force,
     )
     print(
         f"Chatterbox {args.variant} downloaded to {root}\n"

@@ -197,6 +197,10 @@ deliberately reuses the conservative standard figures.
   (`tests/data/chatterbox-upstream.json`) together with any upstream change.
 - Translate or report this service's own markup/controls that the engine cannot consume
   (`[word|pronunciation]`, `<phoneme>`, `custom_lexicon`, `phonetic_preprocess`).
+- Refuse a manifest whose variant differs from the deployed one, and require a SHA-256 for every
+  required file, so the two variants cannot share a models directory unsafely.
+- Fail fast: preflight the optional engine before evicting a healthy one, and back off between
+  failed load attempts instead of re-hashing and re-constructing on every request.
 
 **Acceptance criteria**
 

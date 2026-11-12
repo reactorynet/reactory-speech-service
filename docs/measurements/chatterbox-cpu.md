@@ -188,8 +188,9 @@ cold load, on top of the 21.9 s model load:
 | Quantity | Value |
 |---|---|
 | Bytes hashed (`standard`) | 3,191,966,992 B (3.19 GB) |
-| Measured SHA-256 throughput | **331 MiB/s** |
-| Cost per cold verification | **~9.6 s** (3.19 GB of I/O plus hashing) |
+| Measured SHA-256 throughput | **331 MiB/s** (in-memory) |
+| Cost per cold verification, real weights on disk | **9.66 s** |
+| Cost once memoised (same process, unchanged files) | **1.0 ms** |
 
 Because an idle engine is unloaded and reloaded, the result is memoised per process against a
 signature of `(file, size, mtime_ns)` plus the manifest mtime, so a reload with demonstrably
@@ -226,8 +227,28 @@ is why the result is memoised rather than recomputed on every reload. On a node 
 is on spinning disk or a network mount the hashing throughput will be lower; budget accordingly, or
 keep one engine instance resident so the memo is hit.
 
-There is no environment variable to skip verification: skipping it is the failure mode the manifest
-exists to prevent.
+There is no environment variable to skip verification: skipping it is the failure
+mode the manifest exists to prevent.
+
+Both outcomes are memoised — success *and* failure — keyed on the size and
+`mtime_ns` of every required file plus the manifest's own mtime. A truncated
+weight file therefore costs one 9.66 s pass, not 9.66 s per request, and fixing
+the file invalidates the key automatically.
+
+### Verification integrity
+
+`ensure_available()` refuses two states that a "hash whatever the manifest lists"
+check would accept:
+
+- **A manifest for a different variant.** Both variants default to
+  `models/chatterbox`. Downloading `turbo` over a directory that already holds
+  `standard` rewrites `manifest.json` while the standard checkpoints stay on
+  disk; the store would then hash only turbo's entries and load a `t3_cfg` /
+  `s3gen` that no recorded hash covers. The manifest's `variant` must match the
+  store's, and `download_chatterbox.py` refuses to overwrite the other variant
+  unless `--force` is passed.
+- **A manifest with no entry for a required file.** Hashing the manifest's own
+  list is not verification: every name in `VARIANT_FILES` must carry a SHA-256.
 
 ### Acceptance evidence — the style lowering is audibly different
 

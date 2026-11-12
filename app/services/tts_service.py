@@ -359,14 +359,36 @@ class TTSService:
         if not voice:
             return request, [], False
         record = voice_registry.get_record(voice)
-        if record is None or record.engine == str(target.id):
+        if record is None:
             return request, [], False
+        # Same engine is not the same as renderable: a Chatterbox deployment runs
+        # one variant, and the other variant's voice is registered under the same
+        # engine id.  Ask the adapter rather than comparing ids, so pinning the
+        # wrong variant degrades to the deployed one instead of 422-ing where the
+        # flag-off path would have substituted.
+        can_render = getattr(target, "can_render_voice", None)
+        if record.engine == str(target.id):
+            if callable(can_render) and not can_render(voice):
+                pass  # fall through to substitution
+            else:
+                return request, [], False
         substitute = self._default_voice_for(target)
         if substitute is None or substitute == voice:
             return request, [], False
+        declared_variant = str(record.style_spec.get("variant") or "")
+        deployed_variant = str(getattr(target, "variant", "") or "")
+        if record.engine == str(target.id) and declared_variant and deployed_variant:
+            why = (
+                f"voice '{voice}' belongs to the '{declared_variant}' variant, but this "
+                f"deployment runs '{deployed_variant}'"
+            )
+        elif record.engine == str(target.id):
+            why = f"engine '{target.id}' cannot render voice '{voice}'"
+        else:
+            why = f"voice '{voice}' belongs to engine '{record.engine}'"
         note = (
-            f"voice '{voice}' belongs to engine '{record.engine}'; engine "
-            f"'{target.id}' rendered its default voice '{substitute}' instead"
+            f"{why}; engine '{target.id}' rendered its default voice "
+            f"'{substitute}' instead"
         )
         return request.model_copy(update={"voice": substitute}), [note], True
 
@@ -517,6 +539,7 @@ class TTSService:
         phonetic_preprocess: bool | None = None,
         custom_lexicon: dict[str, str] | None = None,
         fallback: Iterable[str] | None = None,
+        report: dict | None = None,
     ) -> AsyncIterator[tuple[bytes, float]]:
         """Stream ``(wav_chunk_bytes, duration)`` per sentence without blocking.
 
@@ -524,6 +547,13 @@ class TTSService:
         concurrency slot, so the event loop keeps serving other requests between
         sentences.  Streaming is deliberately not cached: a cache entry is a
         complete buffer, and chunk assembly is the caller's protocol.
+
+        ``report``, when supplied, is filled in with the engine and voice that
+        actually rendered (``engine``, ``voice``, ``voice_substituted``,
+        ``voice_notes``, ``warnings``).  A stream can fall back to a different
+        engine than the caller planned for, and switching voice silently is
+        exactly what the HTTP path refuses to do; the transport needs the same
+        facts to report in its completion frame.
         """
         if direction is None and speed is None:
             direction = default_direction(voice)
@@ -558,7 +588,14 @@ class TTSService:
                 raise unavailable
             raise UnknownEngineError("No TTS engine could serve the stream")
 
-        request, _voice_notes, _substituted = self._prepare_request(target, request)
+        request, voice_notes, voice_substituted = self._prepare_request(target, request)
+        if report is not None:
+            report["engine"] = target.id
+            report["voice"] = request.voice
+            report["voice_substituted"] = voice_substituted
+            report["voice_notes"] = list(voice_notes)
+            if unavailable is not None:
+                report["fallback_reason"] = str(unavailable)
         limiter = self._manager.limiter(target.id)
 
         split = getattr(target, "split_sentences", None)

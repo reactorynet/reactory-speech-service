@@ -1,0 +1,316 @@
+{
+  "ticket": {
+    "reference": "REACTORY-302016408/20261110/4004237369",
+    "title": "SPEECH-005 — Phase 4: Expressive engine adapter for tone and emotion (Chatterbox, MIT, CPU)",
+    "type": "feature",
+    "priority": "medium"
+  },
+  "revision": 4,
+  "revisionNote": "Fixes the third review's blocking finding (turbo required a tokenizer.json that does not exist upstream, so CHATTERBOX_VARIANT=turbo could never download or load) plus all six minor findings, and rebases the branch onto master c685637.",
+  "status": "completed_with_environment_limited_verification",
+  "branch": "feature/6af2b2498537a4b915289521",
+  "base": "c685637 (master, PR #20) — branch rebased onto it",
+  "worktree": "/Users/wernerw/Projects/reactory/reactory-worktrees/ai-6af2b2498537a4b915289521",
+  "summary": "Optional, flag-gated Chatterbox (MIT) expressive engine behind the existing TTSEngine contract. The default speech-core image, requirements.txt and all existing endpoint shapes are unchanged; the adapter module is imported only when CHATTERBOX_ENABLED=true and lazy-loads on first request. This revision removes the phantom tokenizer.json from the turbo required-file set (which made the documented CHATTERBOX_VARIANT=turbo deployment permanently undownloadable and unloadable), pins the upstream repository layout in a checked-in fixture so the same class of drift cannot recur silently, aligns the resident-memory advisory with the measurement page it cites, tightens the requirements test to the exact pins, refreshes the upstream size constants with a capture date, stops reporting phonetic_preprocess=false as an ignored control, strengthens the slow prosody assertion, and rebases the branch onto master with the docs reconciled additively.",
+  "reviewFindingsAddressed": [
+    {
+      "id": "Q1",
+      "severity": "blocking",
+      "status": "fixed",
+      "problem": "VARIANT_FILES['turbo'] required tokenizer.json, which does not exist in ResembleAI/chatterbox-turbo. Because ensure_available() demands every name and download_model() raises when a required file is missing, CHATTERBOX_VARIANT=turbo could never download, verify or load — the documented deployment mode was dead.",
+      "change": "Removed 'tokenizer.json' from the turbo tuple (9 files remain: ve.safetensors, t3_turbo_v1.safetensors, s3gen_meanflow.safetensors, vocab.json, merges.txt, tokenizer_config.json, special_tokens_map.json, added_tokens.json, conds.pt) and corrected VARIANT_REQUIRED_BYTES['turbo'] to 2_987_680_596. Added a checked-in capture of both repositories' real file listings at tests/data/chatterbox-upstream.json, and tests that (a) assert every required file exists upstream, (b) assert turbo has no tokenizer.json and does have the five GPT2 tokenizer artefacts, (c) assert the fixture's per-file sums equal the published constants, and (d) run download -> verify -> load end to end per variant against a hub that creates ONLY files that exist upstream.",
+      "evidence": "Upstream API (?blobs=true, 2026-11-12): ResembleAI/chatterbox-turbo @ 749d1c1a has 13 files / 4,044,184,736 B and no tokenizer.json; its tokenizer_config.json declares GPT2Tokenizer and the file set includes vocab.json + merges.txt. The 9 required files sum to exactly 2,987,680,596 B, matching the corrected constant. Standard is unaffected: its 5 required files still sum to 3,191,966,992 B.",
+      "tests": [
+        "test_required_files_all_exist_in_the_real_upstream_repository[standard]",
+        "test_required_files_all_exist_in_the_real_upstream_repository[turbo]",
+        "test_turbo_does_not_require_a_tokenizer_json",
+        "test_upstream_fixture_matches_the_recorded_byte_totals",
+        "test_standard_required_files_are_a_strict_subset_of_the_repository",
+        "test_download_and_load_succeed_against_the_real_file_set[standard]",
+        "test_download_and_load_succeed_against_the_real_file_set[turbo]",
+        "test_a_whole_repository_download_still_satisfies_the_turbo_requirement"
+      ],
+      "regressionProof": "Mutation check: re-inserting 'tokenizer.json' into the turbo tuple makes 4 of the new tests fail, and the end-to-end test fails with the reviewer's exact error — 'ChatterboxModelMissing: ... the download finished but these required files are absent: tokenizer.json'. After restoring, 6/6 pass. This proves the new fixture catches the defect the old all-permissive fake could not."
+    },
+    {
+      "id": "Q2",
+      "severity": "minor",
+      "status": "fixed",
+      "problem": "COMPUTE_COST_ADVISORY said resident_memory_mb 3994 while docs/measurements/chatterbox-cpu.md, the roadmap and the architecture page all say 3,976 MB. Revision 3's report claimed this had been corrected; it had not.",
+      "change": "Constant set to 3976. The test now asserts 3976 AND reads the measurement page to assert it still contains '3,976 MB', so the advisory and its cited source cannot drift apart silently. The revision-3 report's inaccurate claim is corrected below in correctionsToPreviousReport.",
+      "evidence": "HTTP probe of /api/tts/capabilities reports compute_cost.resident_memory_mb = 3976 for both variants.",
+      "tests": [
+        "test_compute_cost_advisory_reports_the_measured_realtime_factor"
+      ]
+    },
+    {
+      "id": "Q3",
+      "severity": "minor",
+      "status": "fixed",
+      "problem": "The slow test asserted only duration_delta >= 0.02 or rms_delta >= 0.002 on a single render pair — a threshold stochastic sampling can cross even between two renders at the same exaggeration.",
+      "change": "The slow test now renders three times per condition and compares the means, and the threshold is derived from the measured slope (a fifth of the ~-4.2% / +4.5% expected at 0.62), i.e. duration_delta >= 0.01 or rms_delta >= 0.001 on the averaged values. The interpolation caveat remains explicit in the measurement doc.",
+      "evidence": "Still skipped here (no weights/torch): '1 skipped, 125 deselected — Chatterbox weights and torch are optional and absent in this environment'.",
+      "tests": [
+        "test_empathetic_audibly_differs_from_neutral_on_cpu (slow, skipped here)"
+      ]
+    },
+    {
+      "id": "Q4",
+      "severity": "minor",
+      "status": "fixed",
+      "problem": "The requirements regression test only asserted that the string 'torch' appeared, so the rejected torch==2.5.1+cpu pin would have passed it.",
+      "change": "The test now asserts 'torch==2.6.0+cpu', 'torchaudio==2.6.0+cpu' and the CPU index URL, and a new test parses the pins with packaging and asserts each satisfies chatterbox-tts 0.1.7's own `torch==2.6.0` / `torchaudio==2.6.0` requirement (which the `+cpu` local version does, because PEP 440 ignores a local segment when the requirement names none).",
+      "tests": [
+        "test_expressive_requirements_pin_the_documented_dependency_traps",
+        "test_the_expressive_pins_satisfy_chatterboxs_own_requirement"
+      ]
+    },
+    {
+      "id": "Q5",
+      "severity": "minor",
+      "status": "fixed",
+      "problem": "VARIANT_REPO_BYTES and the report's file counts had drifted from live upstream metadata (code had 13,866,201,331 B and the report said '16 files'; upstream is now 18 siblings / 13,866,212,931 B and turbo 4,044,184,736 B).",
+      "change": "Refreshed both constants (standard 13,866,212,931 B, turbo 4,044,184,736 B), recorded the capture date and commit SHAs next to them, and stated explicitly that they are informational and not asserted, whereas VARIANT_REQUIRED_BYTES is asserted against the fixture. The measurement page table now shows bytes and file counts, and the tests assert fixture sums equal both constant families.",
+      "evidence": "Fixture sums: standard 18 files = 13,866,212,931 B; turbo 13 files = 4,044,184,736 B. Required sums: 3,191,966,992 B and 2,987,680,596 B.",
+      "tests": [
+        "test_upstream_fixture_matches_the_recorded_byte_totals",
+        "test_manifest_json_is_well_formed",
+        "test_turbo_download_requests_the_turbo_file_set"
+      ]
+    },
+    {
+      "id": "Q6",
+      "severity": "minor",
+      "status": "fixed",
+      "problem": "phonetic_preprocess=False (the default) was reported as an ignored control, producing a misleading warning for a caller who simply disabled preprocessing.",
+      "change": "_report_request_controls now reports the control only when it is truthy, i.e. only when the caller actually requested pre-phonemisation.",
+      "tests": [
+        "test_phonetic_preprocess_true_is_reported_ignored_not_dropped",
+        "test_phonetic_preprocess_false_is_not_reported_as_ignored"
+      ]
+    },
+    {
+      "id": "Q7",
+      "severity": "pre-merge (process)",
+      "status": "fixed",
+      "problem": "The branch was based one commit behind master; a 3-way merge of the roadmap conflicted in three hunks and the measurement page was an add/add conflict.",
+      "change": "Rebased onto c685637. docs/measurements/chatterbox-cpu.md is now master's committed 119-line record byte-identical, with this branch's addendum appended (master's file + 145 added lines, 0 removed). docs/roadmap/voice-expression-roadmap.md was rebuilt from master's text and only additions were appended, so master's own 'Neutralise model.watermarker' / 'ADR-0003 decision 4' scope wording and its measurement blockquote are preserved verbatim (0 deleted lines vs master; 24 added).",
+      "evidence": "git log: HEAD is c685637 and the working tree carries the change set; 'git diff --stat origin/master -- docs/' is +188/-1 across three files. 'diff <(git show origin/master:docs/measurements/chatterbox-cpu.md) <(head -119 docs/measurements/chatterbox-cpu.md)' is empty. Roadmap deletions vs master: 0. My additions are present and countable (Product deviation, Variant caveat, chatterbox-upstream.json).",
+      "residual": "Because the whole branch is one uncommitted change set in this worktree, the rebase was performed by committing a WIP, rebasing with -X theirs, then resetting to master's tip; the tree content is what matters and is verified above. The add/add conflict on the measurement page is resolved as 'master's file + addendum', so re-resolving it on a future merge is a no-op."
+    }
+  ],
+  "correctionsToPreviousReport": [
+    "Revision 3's finding N2 claimed resident memory had been 'corrected to 3,976 MB'. That was false: the constant still said 3994 and only the prose changed. Corrected now in code and asserted against the measurement page (Q2).",
+    "Revision 3's finding B3 described the turbo download as correct. It was not: the required set contained a file turbo does not publish, so the variant could never load (Q1).",
+    "Revision 3 reported '16 files' for the standard repository and used pre-drift byte totals; refreshed to 18 files / 13,866,212,931 B and 13 files / 4,044,184,736 B with a capture date (Q5)."
+  ],
+  "bindingCorrectionsApplied": [
+    "No Chatterbox Nano class in chatterbox-tts 0.1.7; only ChatterboxTTS (standard) and ChatterboxTurboTTS (turbo).",
+    "Measured RTF 0.13 (~7.7x slower than realtime), 3,976 MB resident, 21.9 s load, 24 kHz, flat thread scaling.",
+    "The Perth watermarker is always replaced with a no-op in production (ADR-0003 decision 4).",
+    "exaggeration is clamped to 0.3-0.7 and prosody.rate is never stacked on it.",
+    "The compute-cost advisory is published in /api/tts/capabilities.",
+    "Weights are never downloaded at container build time; the weights-dependent test is slow-marked and skips when the model is absent.",
+    "The resemble-perth/setuptools<81 failure mode maps to an actionable error and a Kokoro fallback.",
+    "Turbo cannot express tone and is declared as such in the adapter, the registry, /capabilities and the roadmap."
+  ],
+  "implementation": {
+    "newFiles": [
+      "app/engines/chatterbox.py",
+      "requirements-expressive.txt",
+      "requirements-expressive-macos.txt",
+      "Dockerfile.expressive",
+      "scripts/download_chatterbox.py",
+      "docs/measurements/chatterbox-cpu.md",
+      "tests/data/chatterbox-upstream.json",
+      "tests/test_chatterbox_engine.py"
+    ],
+    "modifiedFiles": [
+      ".env.example",
+      ".github/workflows/ci.yml",
+      ".gitignore",
+      "Makefile",
+      "app/config.py",
+      "app/core/contracts.py",
+      "app/data/voices.json",
+      "app/engines/manager.py",
+      "app/engines/router.py",
+      "app/models/schemas.py",
+      "app/routers/tts.py",
+      "app/services/tts_service.py",
+      "app/services/voice_registry.py",
+      "docs/architecture/speech-platform.md",
+      "docs/measurements/chatterbox-cpu.md",
+      "docs/roadmap/voice-expression-roadmap.md",
+      "tests/test_engine_adapters.py",
+      "tests/test_voice_catalogue.py"
+    ],
+    "filesIntentionallyUntouched": [
+      "Dockerfile (git diff empty)",
+      "requirements.txt (git diff empty; no torch, no chatterbox)"
+    ],
+    "highlights": {
+      "featureFlag": "CHATTERBOX_ENABLED default false; adapter imported only in the enabled branch; lazy_load=true so startup never loads it.",
+      "watermark": "neutralise_watermarker() installs a _NoOpWatermarker at load and before every render; refuses to render if a watermarker exists and cannot be replaced.",
+      "styleLowering": "standard: warm 0.44, calm 0.32, serious 0.36, narration 0.30, empathetic 0.62, cheerful 0.66, excited 0.70, intensity +/-0.16, hard clamp 0.30-0.70. turbo: styles ['neutral'] only. whisper, rate, pitch, volume, non-natural pauses, style-less intensity, custom_lexicon and phonetic_preprocess(true) are reported in ignored.",
+      "modelManagement": "allow_patterns-limited download from the per-variant required-file set; manifest records MIT licence, attribution, repo, per-file SHA-256, allow_patterns, download/required/repo byte counts and missing files; partial downloads rejected by name; SHA-256 memoised per process.",
+      "routing": "Style-aware candidate ordering after explicit engine and voice ownership; a pinned voice always wins; streaming never style-routes to the non-streaming expressive engine.",
+      "fallback": "All synthesis paths continue to the next candidate on EngineUnavailableError, carry the actionable cause into the warning, and substitute a variant-correct default voice reported as 'voice' in direction_ignored.",
+      "registry": "chatterbox_standard (style-capable, engine voice 'default') and chatterbox_turbo (supports.style=false, engine voice 'default_turbo'), both MIT / 'Chatterbox (Resemble AI)' / gpu_required false.",
+      "upstreamFixture": "tests/data/chatterbox-upstream.json pins both repositories' real file listings (captured 2026-11-12) so required-file drift fails a test instead of silently breaking a variant."
+    }
+  },
+  "acceptanceCriteria": [
+    {
+      "criterion": "With the flag off: default image size, startup time and behaviour are unchanged; /capabilities lists only Kokoro.",
+      "status": "verified",
+      "evidence": "git diff --stat Dockerfile requirements.txt -> empty. Flag-off subprocess: adapter_imported False, torch_imported False, engines ['kokoro'], rows 1, capability key set unchanged."
+    },
+    {
+      "criterion": "With the flag on: style='empathetic' routes to the expressive engine, is reported in direction_applied, and audibly differs from neutral (rendered WAVs or measured prosody difference).",
+      "status": "partially_verified",
+      "evidence": "standard: direction_applied={'style': 'empathetic', 'exaggeration': 0.62}; turbo: applied={}, ignored=['style'] (it cannot honestly claim the style). Measured prosody on the committed renders: 0.5 -> 1.0 is -17.6% duration / +18.6% RMS with waveform correlation 0.011, bounding 0.62 at about -4.2% / +4.5%. The exact 0.62 render with real weights remains impossible on this host (Intel macOS, no torch 2.6.0 x86_64 wheel, no docker); the slow test now renders 3x per condition and compares means. Reviewer accepted this as environment-limited in the previous round."
+    },
+    {
+      "criterion": "style='whisper' appears in direction_ignored with a warning and the request succeeds with 200.",
+      "status": "verified",
+      "evidence": "test_whisper_on_a_chatterbox_voice_succeeds_with_200 and test_whisper_is_reported_as_ignored_not_approximated pass."
+    },
+    {
+      "criterion": "Removing the model directory produces a clear, actionable error and a Kokoro fallback, not a crash.",
+      "status": "verified",
+      "evidence": "200, engine=kokoro, direction_ignored contains 'style', warning contains the model path, download_chatterbox.py and CHATTERBOX_ENABLED=false. Both variants and both fallback routes covered."
+    },
+    {
+      "criterion": "The engine is not imported or loaded when the flag is off; startup works with torch uninstalled.",
+      "status": "verified",
+      "evidence": "Flag-off subprocess: adapter and torch absent from sys.modules. Flag-on + import-blocked subprocess: /health 200, engines ['kokoro','chatterbox'], torch absent."
+    },
+    {
+      "criterion": "Licence and attribution metadata is present in the registry and surfaced by /api/tts/voices.",
+      "status": "verified",
+      "evidence": "Both records MIT / 'Chatterbox (Resemble AI)'; /api/tts/voices returns them; the keys-on-every-row decision is documented in the endpoint docstring."
+    },
+    {
+      "criterion": "Both variants can download, verify and load.",
+      "status": "verified",
+      "evidence": "Per-variant end-to-end test plus an ad-hoc run against the real upstream file set: turbo allow_patterns=9, 9 files created upstream, manifest missing=[], ensure_available licence=MIT, required_total_bytes=2,987,680,596 == constant."
+    },
+    {
+      "criterion": "pytest and ruff check pass; record exact commands and exit codes.",
+      "status": "verified",
+      "evidence": "make test -> exit 0, 753 passed / 15 deselected. make lint -> exit 0, All checks passed (ruff 0.15.5)."
+    }
+  ],
+  "testsRun": [
+    {
+      "command": "make test",
+      "note": "Documented Makefile target = .venv/bin/pytest -v -m \"not slow\"",
+      "exitCode": 0,
+      "counts": "753 passed, 15 deselected, 0 failed in 200.28s"
+    },
+    {
+      "command": "make lint",
+      "note": "Documented Makefile target = .venv/bin/ruff check app/ tests/ (ruff 0.15.5, rule set unchanged: select = [E4, E7, E9, F])",
+      "exitCode": 0,
+      "counts": "All checks passed!"
+    },
+    {
+      "command": ".venv/bin/coverage run --source=app -m pytest -q -m \"not slow\" && .venv/bin/coverage report -m --include=app/engines/chatterbox.py",
+      "note": "coverage.py 7.17.2",
+      "exitCode": 0,
+      "counts": "753 passed, 15 deselected in 250.83s; app/engines/chatterbox.py 519 stmts / 33 miss / 94%"
+    },
+    {
+      "command": ".venv/bin/pytest -q tests/test_chatterbox_engine.py -m \"not slow\"",
+      "exitCode": 0,
+      "counts": "125 passed, 1 deselected"
+    },
+    {
+      "command": ".venv/bin/pytest -q tests/test_chatterbox_engine.py -m slow -rs",
+      "exitCode": 0,
+      "counts": "1 skipped, 125 deselected — 'Chatterbox weights and torch are optional and absent in this environment'"
+    },
+    {
+      "command": "<mutation check> re-insert tokenizer.json into VARIANT_FILES['turbo'], run the upstream-layout tests, then restore",
+      "exitCode": 1,
+      "counts": "MUTATED: 4 failed, 2 passed (test_required_files_all_exist_in_the_real_upstream_repository[turbo], test_turbo_does_not_require_a_tokenizer_json, test_upstream_fixture_matches_the_recorded_byte_totals, test_download_and_load_succeed_against_the_real_file_set[turbo], the last with 'the download finished but these required files are absent: tokenizer.json'). RESTORED: 6 passed."
+    },
+    {
+      "command": "<ad-hoc> download_model(variant='turbo') against a hub that creates only files present in tests/data/chatterbox-upstream.json",
+      "exitCode": 0,
+      "counts": "allow_patterns: 9 | files actually created upstream: 9; manifest missing: []; ensure_available licence: MIT; required_total_bytes: 2987680596 == constant 2987680596"
+    },
+    {
+      "command": "<ad-hoc HTTP> /api/tts/synthesize/json + /api/tts/capabilities for standard and turbo",
+      "exitCode": 0,
+      "counts": "standard: applied={'style': 'empathetic', 'exaggeration': 0.62}, ignored=[], styles 8 entries, supports_exaggeration=True, resident=3976; turbo: applied={}, ignored=['style'], styles=['neutral'], supports_exaggeration=False, resident=3976"
+    },
+    {
+      "command": "CHATTERBOX_ENABLED=false .venv/bin/python -c \"import sys, app.main; ...\"",
+      "exitCode": 0,
+      "counts": "adapter_imported False; torch_imported False; engines ['kokoro']; rows 1"
+    },
+    {
+      "command": "<ad-hoc> HuggingFace API ?blobs=true for both repositories; per-file sums checked against the constants",
+      "exitCode": 0,
+      "counts": "chatterbox: 18 files / 13,866,212,931 B, required 5 = 3,191,966,992 B; chatterbox-turbo: 13 files / 4,044,184,736 B, tokenizer.json absent, required 9 = 2,987,680,596 B"
+    },
+    {
+      "command": "git merge-file / diff checks against origin/master for the two docs",
+      "exitCode": 0,
+      "counts": "measurement page: master's 119 lines byte-identical prefix, 253 lines total; roadmap: 0 deletions vs master, 24 additions; both master-supersets so the merge resolution is lossless"
+    },
+    {
+      "command": ".venv/bin/python -m uv pip compile requirements-expressive.txt --python-version 3.11 --python-platform x86_64-unknown-linux-gnu --index-strategy unsafe-best-match",
+      "note": "Carried forward from revision 3; unchanged this round",
+      "exitCode": 0,
+      "counts": "112 packages; chatterbox-tts==0.1.7, torch==2.6.0+cpu, torchaudio==2.6.0+cpu, 0 nvidia-* packages"
+    }
+  ],
+  "baseline": {
+    "command": ".venv/bin/pytest -q -m \"not slow\"",
+    "note": "Recorded before any change in this worktree, same venv, pre-rebase base",
+    "exitCode": 0,
+    "counts": "628 passed, 14 deselected"
+  },
+  "verificationEnvironment": {
+    "python": "3.13 (venv created in the worktree because the worktree had no .venv)",
+    "host": "Intel macOS (x86_64 Darwin)",
+    "ruff": "0.15.5 (pinned)",
+    "coverage": "7.17.2",
+    "torchInstalled": false,
+    "chatterboxInstalled": false,
+    "modelWeightsPresent": false,
+    "dockerAvailable": false,
+    "note": "No worktree test harness exists for this repository, so the repository's own documented commands (make test / make lint, matching CI's pytest -m 'not slow' and ruff check app/ tests/) were used."
+  },
+  "blockedOrUnverified": [
+    "A real-weights render at exaggeration 0.62 is still not possible here: no macOS x86_64 torch 2.6.0 wheel and no docker daemon, so the 3.19 GB model cannot be run. Bounded from the committed 0.5 and 1.0 renders; the slow test (now repeat-averaged) performs the direct assertion where weights are mounted.",
+    "The literal `pip install --dry-run -r requirements-expressive.txt` cannot run on this host for the same platform reason; proven by uv full-graph resolution plus wheel-existence checks, and run natively by the CI expressive-deps job.",
+    "Real backend API compatibility (from_local/from_pretrained signatures, tts_turbo module path, watermarker attribute) verified by reading the published wheel source, not by importing it.",
+    "Docker image sizes not measured (no docker daemon). Default Dockerfile and requirements.txt are unchanged."
+  ],
+  "risks": [
+    "Product deviation (recorded in the roadmap) still needs owner acknowledgement: the ticket specified a CPU Nano tier at ~3x realtime; the released library has neither, and measured throughput makes CPU expressive TTS batch-only.",
+    "torch==2.6.0 is pinned by chatterbox-tts and carries known CVEs fixed only in later releases. The pin cannot move until chatterbox-tts widens its requirement; do not expose this profile to untrusted model inputs.",
+    "Explicit engine='chatterbox' while the flag is off still returns 422 (the router's existing contract for an explicit override); style-based requests fall back to Kokoro, and with the flag on a missing model does fall back.",
+    "A foreign voice that falls back is substituted with the target engine's variant-correct default and reported as 'voice' in direction_ignored; honest, but a timbre change.",
+    "SHA-256 verification adds ~9.6 s to the first load, memoised per process by (file, size, mtime_ns) + manifest mtime.",
+    "tests/data/chatterbox-upstream.json is a dated snapshot. If upstream adds or removes files the layout tests fail by design, which is the intended prompt to re-check VARIANT_FILES rather than a spurious failure.",
+    "WebSocket streaming reports the plan computed before the render, so a mid-stream fallback can name the intended engine in its done frame; HTTP /synthesize reports the engine that actually rendered. Pre-existing streaming-reporting limitation.",
+    "The rebase left the change set uncommitted in the worktree (commit → rebase → mixed reset), matching how the previous revisions were submitted; publication should squash it into the branch properly."
+  ],
+  "outOfScopeConfirmed": [
+    "No voice cloning endpoint (SPEECH-006).",
+    "No Orpheus or GPU-only tier.",
+    "No training or fine-tuning.",
+    "No change to the default voice, default engine, or existing endpoint response contracts; changes are additive."
+  ],
+  "prBody": {
+    "templateUsed": true,
+    "templatePath": ".github/pull_request_template.md",
+    "warnings": [],
+    "bodyPath": "/Users/wernerw/Projects/reactory/reactory-worktrees/ai-6af2b2498537a4b915289521/.ai-agent/pr-body.md"
+  }
+}

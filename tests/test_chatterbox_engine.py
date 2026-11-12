@@ -49,7 +49,6 @@ from app.engines.chatterbox import (
     _instantiate_backend,
     download_model,
     exaggeration_for,
-    main as chatterbox_main,
     neutralise_watermarker,
     sanitise_text,
 )
@@ -58,6 +57,23 @@ from app.services.tts_service import TTSService
 from app.services.voice_registry import SHIPPED_VOICE_IDS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _download_script():
+    """Import ``scripts/download_chatterbox.py`` as a module.
+
+    The CLI lives only there (the adapter module no longer duplicates the
+    argparse definition), so the test has to load the file rather than import a
+    package path.
+    """
+    import importlib.util
+
+    path = REPO_ROOT / "scripts" / "download_chatterbox.py"
+    spec = importlib.util.spec_from_file_location("download_chatterbox_script", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 CHATTERBOX_STANDARD = "chatterbox_standard"
 CHATTERBOX_TURBO = "chatterbox_turbo"
 
@@ -203,6 +219,15 @@ def _service(
     monkeypatch.setattr(
         settings, "chatterbox_model_dir", model_dir or str(tmp_path / "chatterbox-model")
     )
+    if not kokoro_available:
+        # A double that is merely "not ready" is not enough: the manager will try
+        # to load it, and a developer machine with real Kokoro weights in models/
+        # would then serve the request and hide the fallback path under test.  Pin
+        # the Kokoro model paths at a directory that cannot exist.
+        absent = tmp_path / "absent-kokoro"
+        monkeypatch.setattr(settings, "kokoro_model_path", str(absent / "kokoro.onnx"))
+        monkeypatch.setattr(settings, "kokoro_voices_path", str(absent / "voices.bin"))
+        monkeypatch.setattr(settings, "models_dir", str(absent))
     service = TTSService()
     if kokoro_available:
         service._kokoro = FakeKokoro()
@@ -1254,16 +1279,26 @@ def test_operator_cli_downloads_and_reports_the_licence(tmp_path, monkeypatch, c
     calls: list[dict] = []
     monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hub(tmp_path, calls))
 
-    assert chatterbox_main(["--download", "--models-dir", str(tmp_path / "cb")]) == 0
+    script = _download_script()
+    assert script.main(["--models-dir", str(tmp_path / "cb")]) == 0
     output = capsys.readouterr().out
     assert "MIT" in output
     assert "Chatterbox (Resemble AI)" in output
     assert (tmp_path / "cb" / "manifest.json").is_file()
 
 
-def test_operator_cli_without_download_only_prints_help(capsys):
-    assert chatterbox_main([]) == 0
-    assert "download" in capsys.readouterr().out
+def test_operator_cli_is_defined_once_and_exposes_force(capsys):
+    """The CLI must not be duplicated in the adapter module (it would drift)."""
+    import app.engines.chatterbox as adapter
+
+    assert not hasattr(adapter, "main"), "the CLI belongs only in scripts/download_chatterbox.py"
+
+    script = _download_script()
+    with pytest.raises(SystemExit):
+        script.main(["--help"])
+    help_text = capsys.readouterr().out
+    assert "--variant" in help_text
+    assert "--force" in help_text
 
 
 def test_import_backend_reports_the_missing_optional_profile(monkeypatch):
@@ -1371,12 +1406,29 @@ def test_an_unloaded_engine_is_unavailable_not_a_crash(tmp_path):
     ), "the adapter error must stay a fallback trigger"
 
 
-def test_load_refuses_when_the_flag_is_off(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "chatterbox_enabled", False)
-    engine = ChatterboxEngine(model_store=ChatterboxModelStore(tmp_path))
+def test_an_explicitly_registered_engine_loads_even_with_the_flag_off(tmp_path, monkeypatch):
+    """Registration is the gate, not the environment flag.
 
-    with pytest.raises(ChatterboxError, match="CHATTERBOX_ENABLED=false"):
-        engine.load()
+    ``TTSService(expressive=True)`` registers this adapter on a process whose
+    ``CHATTERBOX_ENABLED`` is false.  ``load()`` used to refuse, so such an engine
+    was advertised in ``/capabilities`` and style-routed but could never load —
+    every request paid a fallback.
+    """
+    root = tmp_path / "model"
+    _write_model(root)
+    monkeypatch.setattr(settings, "chatterbox_enabled", False)
+
+    class Backend:
+        @staticmethod
+        def from_local(path, device):
+            return FakeChatterbox()
+
+    monkeypatch.setattr("app.engines.chatterbox._import_backend", lambda _variant: Backend)
+    engine = ChatterboxEngine(model_store=ChatterboxModelStore(root))
+
+    engine.load()
+
+    assert engine.is_ready is True
 
 
 def test_turbo_still_renders_neutral_audio(tmp_path):
@@ -1965,3 +2017,345 @@ def test_a_whole_repository_download_still_satisfies_the_turbo_requirement(tmp_p
     assert len(store.weight_files()) == len(VARIANT_FILES["turbo"]) < len(upstream)
     store.write_manifest(manifest)
     assert store.ensure_available()["missing"] == []
+
+
+# ---------------------------------------------------------------------------
+# PR review #21 — verification integrity, fail-fast, and honest reporting
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_verification_memo():
+    """The verification memo is process-global; do not leak it across tests."""
+    from app.engines import chatterbox as adapter
+
+    adapter._VERIFIED_MODELS.clear()
+    yield
+    adapter._VERIFIED_MODELS.clear()
+
+
+def test_a_manifest_for_another_variant_is_refused(tmp_path):
+    """Downloading turbo over standard must not let standard load unverified files.
+
+    Both variants default to the same models directory and share several file
+    names.  A turbo download rewrites ``manifest.json``; if the store accepted it,
+    standard would hash only turbo's entries and happily load a ``t3_cfg`` /
+    ``s3gen`` that no recorded hash covers.
+    """
+    root = tmp_path / "shared"
+    _write_model(root, variant="standard")
+    # Simulate a turbo download into the same directory: turbo manifest, standard
+    # checkpoints still on disk (they are not deleted).
+    turbo_manifest = ChatterboxModelStore(root, variant="turbo").build_manifest()
+    ChatterboxModelStore(root).write_manifest(turbo_manifest)
+
+    with pytest.raises(ChatterboxModelMissing) as excinfo:
+        ChatterboxModelStore(root, variant="standard").ensure_available()
+
+    message = str(excinfo.value)
+    assert "variant" in message
+    assert "turbo" in message
+
+
+def test_a_manifest_missing_a_required_entry_is_refused(tmp_path):
+    """Hashing only what the manifest lists is not verification."""
+    root = tmp_path / "model"
+    manifest = _write_model(root)
+    del manifest["files"]["t3_cfg.safetensors"]  # still on disk, no recorded hash
+    ChatterboxModelStore(root).write_manifest(manifest)
+
+    with pytest.raises(ChatterboxModelMissing, match="t3_cfg.safetensors"):
+        ChatterboxModelStore(root).ensure_available()
+
+
+def test_download_refuses_to_overwrite_another_variant(tmp_path, monkeypatch):
+    _real_hub(monkeypatch, "standard")
+    root = tmp_path / "shared"
+    download_model(root, variant="standard")
+
+    with pytest.raises(ChatterboxModelMissing, match="already holds"):
+        download_model(root, variant="turbo")
+
+
+def test_download_force_overwrites_another_variant(tmp_path, monkeypatch):
+    _real_hub(monkeypatch, "standard")
+    root = tmp_path / "shared"
+    download_model(root, variant="standard")
+
+    _real_hub(monkeypatch, "turbo")
+    manifest = download_model(root, variant="turbo", force=True)
+
+    assert manifest["variant"] == "turbo"
+
+
+def test_a_failed_verification_is_not_repeated_on_every_call(tmp_path, monkeypatch):
+    """A truncated file must not cost ~3 GB of hashing per request."""
+    root = tmp_path / "model"
+    _write_model(root)
+    (root / "s3gen.safetensors").write_bytes(b"tampered")
+    store = ChatterboxModelStore(root)
+    calls = {"n": 0}
+    real = ChatterboxModelStore.sha256
+
+    def counting(path):
+        calls["n"] += 1
+        return real(path)
+
+    monkeypatch.setattr(ChatterboxModelStore, "sha256", staticmethod(counting))
+
+    with pytest.raises(ChatterboxModelMissing):
+        store.ensure_available()
+    first = calls["n"]
+    assert first >= 1
+
+    # Second and third calls reuse the memoised negative result.
+    for _ in range(2):
+        with pytest.raises(ChatterboxModelMissing):
+            store.ensure_available()
+    assert calls["n"] == first, "a failed verification was recomputed"
+
+
+def test_verification_hashes_each_file_only_once(tmp_path, monkeypatch):
+    """ensure_available must not hash again just to name the bad file."""
+    root = tmp_path / "model"
+    _write_model(root)
+    (root / "s3gen.safetensors").write_bytes(b"tampered")
+    calls = {"n": 0}
+    real = ChatterboxModelStore.sha256
+
+    def counting(path):
+        calls["n"] += 1
+        return real(path)
+
+    monkeypatch.setattr(ChatterboxModelStore, "sha256", staticmethod(counting))
+
+    with pytest.raises(ChatterboxModelMissing) as excinfo:
+        ChatterboxModelStore(root).ensure_available()
+
+    assert "s3gen.safetensors" in str(excinfo.value)
+    # 5 files; s3gen is the 4th alphabetically of the required set, so the pass
+    # stops there. The point is that it is not hashed a second time.
+    assert calls["n"] <= len(VARIANT_FILES["standard"])
+
+
+def _manager_with(tmp_path, engines, **kwargs):
+    from app.engines.manager import EngineManager
+
+    return EngineManager(engines, **kwargs)
+
+
+class _PreflightFailsEngine:
+    """A lazy engine whose viability check always fails."""
+
+    id = "expressive"
+    lazy_load = True
+    is_ready = False
+
+    def __init__(self):
+        self.preflight_calls = 0
+        self.initialize_calls = 0
+
+    def capabilities(self):
+        from app.core.contracts import EngineCapabilities
+
+        return EngineCapabilities(engine=self.id)
+
+    def voices(self):
+        return []
+
+    def preflight(self):
+        self.preflight_calls += 1
+        raise EngineUnavailableError("weights are not mounted")
+
+    async def initialize(self):
+        self.initialize_calls += 1
+
+    def synthesize(self, req):  # pragma: no cover - never reached
+        raise EngineUnavailableError("no model")
+
+    def stream(self, req):  # pragma: no cover
+        yield
+
+
+def test_a_failing_preflight_does_not_evict_a_healthy_engine():
+    """max_loaded_engines=1: the failing engine must not cost Kokoro its slot."""
+    kokoro = _ReadyStubEngine("kokoro")
+    expressive = _PreflightFailsEngine()
+    manager = _manager_with(None, [kokoro, expressive], max_loaded_engines=1)
+    asyncio.run(manager.initialize())
+
+    assert manager.is_ready("kokoro") is True
+
+    with pytest.raises(EngineUnavailableError):
+        asyncio.run(manager.ensure_loaded("expressive"))
+
+    assert manager.is_ready("kokoro") is True, "a failing preflight evicted Kokoro"
+    assert expressive.initialize_calls == 0, "the engine was constructed despite failing preflight"
+
+
+def test_a_repeated_load_failure_is_not_retried_on_every_request():
+    """The backoff stops a broken engine costing seconds per request."""
+    kokoro = _ReadyStubEngine("kokoro")
+    expressive = _PreflightFailsEngine()
+    now = {"t": 1000.0}
+    manager = _manager_with(
+        None,
+        [kokoro, expressive],
+        max_loaded_engines=2,
+        clock=lambda: now["t"],
+    )
+    manager._load_retry_seconds = 30.0
+
+    with pytest.raises(EngineUnavailableError):
+        asyncio.run(manager.ensure_loaded("expressive"))
+    first = expressive.preflight_calls
+
+    for _ in range(3):
+        with pytest.raises(EngineUnavailableError):
+            asyncio.run(manager.ensure_loaded("expressive"))
+
+    assert expressive.preflight_calls == first, "preflight repeated inside the backoff window"
+
+    # After the window the manager tries again.
+    now["t"] += 31.0
+    with pytest.raises(EngineUnavailableError):
+        asyncio.run(manager.ensure_loaded("expressive"))
+    assert expressive.preflight_calls == first + 1
+
+
+class _ReadyStubEngine:
+    """Minimal ready engine so eviction/fallback logic has something to protect."""
+
+    def __init__(self, engine_id: str):
+        self.id = engine_id
+        self.is_ready = True
+
+    @property
+    def lazy_load(self) -> bool:
+        return False
+
+    def capabilities(self):
+        from app.core.contracts import EngineCapabilities
+
+        return EngineCapabilities(engine=self.id)
+
+    def voices(self):
+        return []
+
+    def synthesize(self, req):  # pragma: no cover - not exercised here
+        raise EngineUnavailableError("stub")
+
+    def stream(self, req):  # pragma: no cover
+        yield
+
+
+def test_pinning_the_other_variant_voice_substitutes_instead_of_422(tmp_path, monkeypatch):
+    """A turbo deployment must degrade, not 422, for a standard-variant voice.
+
+    The flag-off path already substitutes; returning 422 here was inconsistent.
+    """
+    from app.main import app
+
+    service = _service(tmp_path, monkeypatch, expressive=True, variant="turbo")
+    app.state.tts_service = service
+
+    response = TestClient(app).post(
+        "/api/tts/synthesize/json",
+        json={"text": "Hello there.", "voice": CHATTERBOX_STANDARD},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["engine"] == "chatterbox"
+    assert "voice" in body["direction_ignored"]
+    assert any("variant" in warning for warning in body["direction_warnings"])
+
+
+def test_streaming_reports_the_engine_and_voice_that_actually_rendered(tmp_path, monkeypatch):
+    """A stream that falls back must not describe the plan it abandoned."""
+    service = _service(
+        tmp_path, monkeypatch, expressive=True, chatterbox_ready=False, variant="turbo"
+    )
+    report: dict = {}
+
+    async def run():
+        async for _chunk, _duration in service.synthesize_streaming_async(
+            "Hello there.", voice=CHATTERBOX_TURBO, report=report
+        ):
+            pass
+
+    asyncio.run(run())
+
+    assert report["engine"] == "kokoro"
+    assert report["voice_substituted"] is True
+    assert report["voice"] == voice_registry.default_voice_id()
+    assert "chatterbox" in report.get("fallback_reason", "")
+
+
+def test_long_unpunctuated_text_is_split_on_word_boundaries():
+    """A hard cut mid-word renders 'exagge' | 'ration' as two utterances."""
+    text = ("exaggeration " * 80).strip()
+
+    chunks = _chunk_text(text)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= MAX_CHARS_PER_CALL for chunk in chunks)
+    # Every chunk ends at a word boundary: no chunk starts mid-word.
+    for chunk in chunks[:-1]:
+        assert not chunk.endswith("exagge"), chunk
+    assert all(chunk.split()[0] == "exaggeration" for chunk in chunks)
+
+
+def test_a_single_unbroken_token_still_splits_without_losing_text():
+    text = "A" * 1500
+
+    chunks = _chunk_text(text)
+
+    assert all(len(chunk) <= MAX_CHARS_PER_CALL for chunk in chunks)
+    assert "".join(chunks) == text
+
+
+def test_capabilities_flag_off_payload_is_unchanged(tmp_path, monkeypatch):
+    """The flag-off Kokoro row must keep exactly the keys it had before this PR.
+
+    ``response_model_exclude_none=True`` also removed pre-existing ``None`` values
+    (``default_voice``, the ``caveat: null`` entries in ``language_support``), which
+    would have been a silent breaking change for existing clients.
+    """
+    from app.main import app
+
+    service = _service(tmp_path, monkeypatch, expressive=False)
+    app.state.tts_service = service
+    payload = TestClient(app).get("/api/tts/capabilities").json()
+
+    assert len(payload["engines"]) == 1
+    row = payload["engines"][0]
+    assert set(row) == {
+        "id",
+        "engine",
+        "name",
+        "available",
+        "license",
+        "languages",
+        "unsupported_languages",
+        "languages_with_caveats",
+        "language_support",
+        "languages_pending",
+        "voice_count",
+        "default_voice",
+        "native_rate",
+        "native_pitch",
+        "native_volume",
+        "styles",
+        "supports_cloning",
+        "supports_streaming",
+        "supports_ssml",
+        "sample_rates",
+        "max_chars",
+        "gpu_required",
+        "speed_range",
+    }
+    # Pre-existing nulls survive: this is the part exclude_none got wrong.
+    assert "default_voice" in row
+    for entry in row.get("language_support") or []:
+        assert "caveat" in entry
