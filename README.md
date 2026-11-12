@@ -556,6 +556,38 @@ The per-voice catalogue of record — language families, the full grade table, b
 recipes and licensing notes — lives in `docs/voices/kokoro-voice-catalogue.md`. Designed
 voices are documented in `docs/voices/designed-voices.md`.
 
+## Evaluation harness
+
+The service ships an offline evaluation harness (`app/eval`, SPEECH-007) so routing and
+upgrade decisions are measured rather than guessed. It renders a committed golden corpus
+through configurable engine and voice combinations, transcribes each render with the
+local faster-whisper service and reports round-trip WER/CER, duration and real-time
+factor, time-to-first-audio, peak memory, speaker consistency and prosody adherence. No
+network, no paid service.
+
+```bash
+# Measure and write a JSON report (models must be mounted)
+python -m app.eval run --engines kokoro --voices default --stt-model base \
+  --out reports/kokoro.json
+
+# Human-readable comparison table
+python -m app.eval report reports/kokoro.json
+
+# Diff against the committed baseline (exit 1 on a reproducible regression)
+python -m app.eval compare reports/kokoro.json \
+  app/eval/baselines/kokoro-v1.0.0.json --fail-on-regression
+
+# Ask the routing policy which engine to use
+python -m app.eval route --language fr --style empathetic --tier premium
+```
+
+The routing policy is data (`app/eval/policies/routing.json`), the golden corpus is data
+(`app/eval/data/golden_corpus.json`), and a new engine needs only a registration. A full
+corpus run takes minutes and is a release/weekly activity, not a per-commit gate; see
+[`docs/architecture/evaluation-harness.md`](docs/architecture/evaluation-harness.md) for
+the metric definitions, the declared variance, the routing rules and the current
+findings (Japanese and Chinese are broken, and this is the harness that measures it).
+
 ## Architecture
 
 ```

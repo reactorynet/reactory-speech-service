@@ -40,5 +40,7 @@ htmlcov/
 # Synthesis cache (in-process LRU is not persisted; the disk tier is local)
 .cache/
 
+# Evaluation reports (ad-hoc runs; committed baselines live in app/eval/baselines)
+reports/
 # Designed-voice preview WAVs (derived from the recipe and regenerated on demand)
 data/previews/
