@@ -1289,7 +1289,10 @@ def test_operator_cli_downloads_and_reports_the_licence(tmp_path, monkeypatch, c
 
 def test_operator_cli_is_defined_once_and_exposes_force(capsys):
     """The CLI must not be duplicated in the adapter module (it would drift)."""
-    import app.engines.chatterbox as adapter
+    # The adapter module is already imported above via `from app.engines.chatterbox
+    # import ...`, so reach for that module object rather than mixing import styles
+    # (CodeQL py/import-and-import-from).
+    adapter = sys.modules["app.engines.chatterbox"]
 
     assert not hasattr(adapter, "main"), "the CLI belongs only in scripts/download_chatterbox.py"
 
