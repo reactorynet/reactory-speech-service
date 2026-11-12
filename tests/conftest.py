@@ -12,6 +12,27 @@ from app.core.contracts import DirectionPlan
 from app.services.tts_service import SynthesisOutcome
 
 
+@pytest.fixture(scope="session", autouse=True)
+def warm_g2p_capability():
+    """Measure the G2P support matrix once for the whole session.
+
+    ``espeak-ng`` loads one dictionary per language the first time that language
+    is phonemised, which costs about 1.5 s per language.  The capability report
+    and the per-request language guard both read that measurement.  Warming it as
+    a fixture mirrors production, where the probe runs at startup, and keeps the
+    ~12 s of dictionary loading out of any test that happens to run first — in
+    particular the inference-concurrency tests, which would otherwise be timing
+    a dictionary load rather than the engine.
+
+    It is deliberately session-scoped: the probe result is process-wide state, and
+    re-probing per test would make the suite unusable.
+    """
+    from app.services.g2p_capability import g2p_capability
+
+    g2p_capability.report()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def isolated_tts_cache(tmp_path, monkeypatch):
     """Keep the cache and the persistent lexicon out of the repository.

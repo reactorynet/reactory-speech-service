@@ -307,6 +307,75 @@ def _locale_for_language(language: str) -> str:
     return DEFAULT_LOCALE
 
 
+def _normalise_language_code(value: str) -> str:
+    """Lower-case a language tag and make ``_`` and ``-`` equivalent."""
+    return value.strip().lower().replace("_", "-")
+
+
+def _family_for(value: str | None) -> LanguageFamily | None:
+    """Resolve a language tag *or* an engine locale to its family, or ``None``.
+
+    Exact matches win over prefix matches, and the registry order decides ties, so
+    the function is deterministic without a second mapping table. The prefix pass
+    is what makes ``zh-CN`` resolve to the family that carries ``locale="cmn"`` and
+    ``en`` resolve to ``en-US`` (the first English family in the registry).
+    """
+    if not value:
+        return None
+    wanted = _normalise_language_code(value)
+    if not wanted:
+        return None
+
+    families = list(LANGUAGE_FAMILIES.values())
+    for family in families:
+        if family.locale == wanted:
+            return family
+    for family in families:
+        if family.language.lower() == wanted:
+            return family
+
+    base = wanted.split("-")[0]
+    for family in families:
+        if family.language.lower().split("-")[0] == base:
+            return family
+    for family in families:
+        if family.locale.split("-")[0] == base:
+            return family
+    return None
+
+
+def engine_locale(language: str | None, *, default: str = DEFAULT_LOCALE) -> str:
+    """Return the engine locale for a caller-supplied language tag.
+
+    This is the single place a language tag (``zh``, ``zh-CN``, ``pt``, ``fr-FR``)
+    becomes the code the engine and its phonemizer expect (``cmn``, ``pt-br``,
+    ``fr-fr``). The mapping is *read from* :data:`LANGUAGE_FAMILIES`; there is no
+    parallel table to keep in sync. An unknown tag is lower-cased and passed
+    through so the phonemizer, not this function, reports that it cannot handle it.
+    """
+    if not language or not language.strip():
+        return default
+    family = _family_for(language)
+    if family is not None:
+        return family.locale
+    return _normalise_language_code(language)
+
+
+def canonical_language(locale: str | None) -> str | None:
+    """Return the canonical language tag for an engine locale, or ``None``.
+
+    ``cmn`` -> ``zh``; ``en-gb`` -> ``en-GB``. Used when reporting support by
+    language instead of by engine code.
+    """
+    family = _family_for(locale)
+    return family.language if family is not None else None
+
+
+def all_canonical_languages() -> list[str]:
+    """Every canonical language tag the registry knows, deduplicated and sorted."""
+    return sorted({family.language for family in LANGUAGE_FAMILIES.values()})
+
+
 def load_voice_registry(path: str | Path | None = None) -> VoiceRegistry:
     """Load and validate the registry file.
 

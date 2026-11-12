@@ -97,6 +97,11 @@ class EngineCapabilities(BaseModel):
 
     engine: str
     languages: list[str] = Field(default_factory=list)
+    #: Languages the voice pack advertises but the text front end cannot
+    #: phonemise. They are not in ``languages``; requests for them return 422.
+    unsupported_languages: list[str] = Field(default_factory=list)
+    #: Measured G2P support rows: ``{language, locale, supported, reason}``.
+    language_support: list[dict] = Field(default_factory=list)
     native_rate: bool = False
     native_pitch: bool = False
     native_volume: bool = False

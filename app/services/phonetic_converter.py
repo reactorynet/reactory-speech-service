@@ -4,6 +4,23 @@ Provides text normalization, pronunciation dictionary mapping, persistent custom
 per-request lexicon overrides, inline phonetic markup ([word|pronunciation] and <phoneme ph="ipa">),
 and grapheme-to-phoneme (G2P) conversion using espeak-ng / phonemizer via Kokoro's Tokenizer.
 
+Language policy
+---------------
+
+* **Locale resolution.** ``language`` may be a caller tag (``zh``) or an engine
+  locale (``cmn``); :func:`app.services.voice_registry.engine_locale` resolves it
+  from the voice registry, so the ``cmn`` the voice records already carry is the
+  code espeak receives.
+* **Markers are metadata.** espeak brackets a span it read in another language
+  with ``(en)`` / ``(ja)``. Those tokens are stripped before the phoneme string
+  leaves this module; a vocoder would otherwise speak them literally.
+* **Lexicon scope.** The built-in units, abbreviations and technology respellings
+  are English and apply to English voices only. Other languages use their own G2P
+  or an explicit lexicon entry (``ipa`` is exact).
+* **Refusal over garbage.** When espeak spells the input out because it cannot
+  read the script (the Japanese kanji case), the conversion raises
+  :class:`UnsupportedLanguageError`, which the HTTP layer returns as ``422``.
+
 Thread safety
 -------------
 espeak-ng is a single C library that keeps its configuration and synthesis state in
@@ -47,8 +64,121 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from app.config import settings
+from app.services.voice_registry import canonical_language, engine_locale
 
 logger = logging.getLogger(__name__)
+
+#: espeak-ng language-switch markers, e.g. ``(en)`` / ``(ja)`` / ``(en-gb)``.
+#:
+#: espeak emits these around a span it read in a different language. They are
+#: metadata about *how* the phonemes were produced, never phonemes themselves: a
+#: vocoder handed ``(en)`` speaks the parentheses and the language name. Every
+#: marker is therefore removed before the phoneme string leaves this module.
+LANGUAGE_SWITCH_MARKER = re.compile(r"\(([a-z]{2,3}(?:-[a-z]{2,4})?)\)")
+
+#: Minimum number of language-switch marker *pairs* that means "this is not a
+#: foreign word, this is espeak spelling the input out".
+#:
+#: A French sentence containing an English brand name produces a single
+#: ``(en)...(fr)`` pair: the switch is a *word*, and one pair is legitimate
+#: (measured: 1 pair for a French sentence containing three English brand names).
+#: When espeak cannot read a script it instead names each character ("japanese
+#: letter") and emits a pair per character — measured: 21 pairs for a 21-character
+#: Japanese sentence. The guard is therefore length-relative; see
+#: :func:`marks_spelling_fallback`.
+SPELLING_FALLBACK_MARKER_PAIRS = 3
+
+#: Characters per switch pair above which the switches are spelling, not words.
+#:
+#: Spelling fallback runs at roughly one pair per character; genuine loanword
+#: switches are one pair per foreign *word*. One pair per four characters sits
+#: between the two measured regimes with room for short sentences.
+SPELLING_FALLBACK_CHARS_PER_PAIR = 4
+
+#: Minimum number of phoneme tokens before the repeated-token signature is
+#: considered at all. Short utterances legitimately repeat.
+SPELLING_OUTPUT_MIN_TOKENS = 6
+
+#: Distinct-token ratio at or below which the phoneme string is one syllable
+#: cycling, not language. Measured on this repository's corpus: legitimate
+#: sentences sit at 0.69-1.00; espeak spelling a script out sits at 0.05-0.10
+#: (a 21-character Japanese sentence gave 21 tokens with 2 distinct values).
+SPELLING_OUTPUT_MAX_DISTINCT_RATE = 0.35
+
+#: Tokens per input character at or above which the output is character-for-
+#: character, not word-for-word. Spelling fallback emits exactly one token per
+#: source character; real text emits about one per word (measured maximum for a
+#: legitimate sentence in its own language: 0.76, syllable-dense Mandarin).
+SPELLING_OUTPUT_MIN_TOKENS_PER_CHAR = 0.6
+
+#: Scripts that :data:`READABLE_SCRIPTS` maps onto languages.
+#:
+#: Latin is deliberately not listed: every language this service ships accepts
+#: Latin characters (brand names, code identifiers, loanwords), which is why
+#: ``Reactory`` is readable in Spanish, Italian, Portuguese and Hindi.
+SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
+    "kana": re.compile(r"[\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff]"),
+    "han": re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"),
+    "hangul": re.compile(r"[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7af]"),
+    "devanagari": re.compile(r"[\u0900-\u097f\ua8e0-\ua8ff]"),
+    "arabic": re.compile(r"[\u0600-\u06ff\u0750-\u077f\ufb50-\ufdff\ufe70-\ufefc]"),
+    "hebrew": re.compile(r"[\u0590-\u05ff\ufb1d-\ufb4f]"),
+    "cyrillic": re.compile(r"[\u0400-\u04ff\u0500-\u052f]"),
+    "greek": re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]"),
+    "thai": re.compile(r"[\u0e00-\u0e7f]"),
+}
+
+#: Scripts each language's own orthography uses, by ISO 639-1 (or engine locale)
+#: prefix, plus Latin because every shipped language reads Latin loanwords.
+#:
+#: This is the *deterministic* half of the SPEECH-010 guard: a Japanese sentence
+#: sent to an English voice must be refused before a 21-second render, and for
+#: ``en-us``/``es``/``it`` espeak emits no language-switch markers at all — it just
+#: transliterates each character (``dʒˈæpəniːzlˌɛɾɚ`` twenty-one times), so the
+#: marker guard alone could not see it. A language absent from this map is left to
+#: the backend to accept or reject, so a custom voice pack is not broken by it.
+READABLE_SCRIPTS: dict[str, frozenset[str]] = {
+    **{
+        code: frozenset({"latin"})
+        for code in (
+            "en", "es", "pt", "fr", "it", "de", "nl", "sv", "da", "no", "nb", "nn",
+            "fi", "is", "pl", "cs", "sk", "sl", "hr", "bs", "tr", "az", "id", "ms",
+            "vi", "ro", "hu", "ca", "gl", "eu", "et", "lv", "lt", "sq", "cy", "ga",
+            "gd", "mt", "af", "sw", "tl", "fil",
+        )
+    },
+    "hi": frozenset({"devanagari", "latin"}),
+    "mr": frozenset({"devanagari", "latin"}),
+    "ne": frozenset({"devanagari", "latin"}),
+    "zh": frozenset({"han", "latin"}),
+    "cmn": frozenset({"han", "latin"}),
+    "yue": frozenset({"han", "latin"}),
+    "ja": frozenset({"kana", "han", "latin"}),
+    "ko": frozenset({"hangul", "han", "latin"}),
+    "ar": frozenset({"arabic", "latin"}),
+    "ur": frozenset({"arabic", "latin"}),
+    "fa": frozenset({"arabic", "latin"}),
+    "ps": frozenset({"arabic", "latin"}),
+    "he": frozenset({"hebrew", "latin"}),
+    "iw": frozenset({"hebrew", "latin"}),
+    "ru": frozenset({"cyrillic", "latin"}),
+    "uk": frozenset({"cyrillic", "latin"}),
+    "bg": frozenset({"cyrillic", "latin"}),
+    "sr": frozenset({"cyrillic", "latin"}),
+    "mk": frozenset({"cyrillic", "latin"}),
+    "be": frozenset({"cyrillic", "latin"}),
+    "kk": frozenset({"cyrillic", "latin"}),
+    "el": frozenset({"greek", "latin"}),
+    "th": frozenset({"thai", "latin"}),
+}
+
+#: Language codes whose built-in lexicon, unit and abbreviation expansions apply.
+#:
+#: The built-in table is an *English* respelling dictionary ("Ree-actory",
+#: "kilometers", "Mister"); applying it to French or Spanish splices English
+#: phonemes into the utterance. Non-English languages get their own G2P, or an
+#: explicit per-request / persistent lexicon entry (the ``ipa`` field is exact).
+BUILTIN_LEXICON_LANGUAGES: frozenset[str] = frozenset({"en"})
 
 #: Serialises every grapheme-to-phoneme call in this process.
 #:
@@ -64,6 +194,164 @@ class PhoneticConversionError(RuntimeError):
     Raised instead of silently returning the normalised *prose*, which a caller
     that asked for phonemes would otherwise hand to the engine as if it were IPA.
     """
+
+
+class UnsupportedLanguageError(ValueError):
+    """The phonemizer cannot read this text in the requested language.
+
+    A ``ValueError`` on purpose: the HTTP layer already maps that to ``422``, which
+    is the honest status for "this voice cannot speak this language". Silence or
+    fluent nonsense would both be worse than a clear refusal.
+    """
+
+    def __init__(self, language: str, reason: str) -> None:
+        self.language = language
+        self.reason = reason
+        super().__init__(f"Language '{language}' cannot be phonemised: {reason}")
+
+
+def strip_language_markers(phonemes: str) -> tuple[str, list[str]]:
+    """Remove espeak language-switch markers, returning ``(clean, markers)``.
+
+    The markers are returned so a caller can decide what their *presence* means
+    (a loanword switch is fine, spelling fallback is not) without ever handing one
+    to the vocoder. Punctuation-adjacent whitespace left behind is collapsed.
+    """
+    markers = LANGUAGE_SWITCH_MARKER.findall(phonemes or "")
+    clean = LANGUAGE_SWITCH_MARKER.sub("", phonemes or "")
+    clean = re.sub(r"\s{2,}", " ", clean).strip()
+    return clean, markers
+
+
+def is_english(language: str | None) -> bool:
+    """Whether a language code denotes English (``en``, ``en-us``, ``en-gb``)."""
+    if not language:
+        return True
+    normalised = language.strip().lower().replace("_", "-")
+    return normalised.split("-")[0] in BUILTIN_LEXICON_LANGUAGES
+
+
+def marks_spelling_fallback(text: str, marker_pairs: int) -> bool:
+    """Whether espeak's language switches show it *spelled the input out*.
+
+    Two regimes are measured on this repository:
+
+    * a foreign word or brand name switches once — 1 pair for a 55-character
+      French sentence containing three English brand names;
+    * a script espeak cannot read falls back to naming every character — 21 pairs
+      for a 21-character Japanese sentence.
+
+    Counting pairs alone would refuse the first (a legitimate loanword) once a
+    sentence names three products. The threshold therefore scales with the input:
+    a fixed floor for short text, then one pair per
+    :data:`SPELLING_FALLBACK_CHARS_PER_PAIR` characters.
+    """
+    threshold = max(
+        SPELLING_FALLBACK_MARKER_PAIRS,
+        len(text or "") // SPELLING_FALLBACK_CHARS_PER_PAIR,
+    )
+    return marker_pairs >= threshold
+
+
+def unreadable_script(text: str, locale: str | None) -> str | None:
+    """The script in ``text`` that ``locale`` cannot read, or ``None``.
+
+    Deterministic, pre-phonemisation half of the SPEECH-010 guard. It exists
+    because the marker guard cannot see the worst case: a Japanese sentence sent
+    to an English voice makes espeak-ng transliterate each character without
+    emitting a single language-switch marker (measured: ``dʒˈæpəniːzlˌɛɾɚ``
+    repeated 21 times, 20.9 s of audio, HTTP 200).
+
+    A language absent from :data:`READABLE_SCRIPTS` returns ``None`` — the backend
+    keeps the final say, so an out-of-tree voice pack is not broken by a table it
+    is not in.
+    """
+    prefix = (locale or "").strip().lower().replace("_", "-").split("-")[0]
+    if not prefix:
+        return None
+    allowed = READABLE_SCRIPTS.get(prefix)
+    if allowed is None:
+        return None
+    for name, pattern in SCRIPT_PATTERNS.items():
+        if name in allowed:
+            continue
+        if pattern.search(text or ""):
+            return name
+    return None
+
+
+def marks_spelling_output(text: str, phonemes: str) -> bool:
+    """Whether phonemes show one syllable per character — spelling, not speech.
+
+    Post-phonemisation half of the guard, for a script this module does not
+    enumerate. Two conditions must both hold, so ordinary repetition in speech is
+    not caught:
+
+    * the token stream is mostly one value cycling (distinct-token rate at or
+      below :data:`SPELLING_OUTPUT_MAX_DISTINCT_RATE`), and
+    * there is about one token per source character (at or above
+      :data:`SPELLING_OUTPUT_MIN_TOKENS_PER_CHAR`).
+
+    Measured separation on this repository's corpus: legitimate sentences 0.69-1.00
+    distinct and at most 0.76 tokens/char; spelling fallback 0.05-0.10 distinct and
+    1.00 tokens/char.
+    """
+    tokens = (phonemes or "").split()
+    if len(tokens) < SPELLING_OUTPUT_MIN_TOKENS:
+        return False
+    distinct_rate = len(set(tokens)) / len(tokens)
+    if distinct_rate > SPELLING_OUTPUT_MAX_DISTINCT_RATE:
+        return False
+    characters = len("".join((text or "").split()))
+    if not characters:
+        return False
+    return len(tokens) / characters >= SPELLING_OUTPUT_MIN_TOKENS_PER_CHAR
+
+
+def ensure_text_is_readable(text: str, locale: str | None) -> None:
+    """Raise :class:`UnsupportedLanguageError` when the script is unreadable.
+
+    Called *before* phonemisation on every render path, so the refusal costs
+    nothing and cannot be reached with a 20-second garbage render.
+    """
+    script = unreadable_script(text, locale)
+    if script is not None:
+        raise UnsupportedLanguageError(
+            str(locale or ""),
+            f"the text is written in {script} script, which the "
+            f"'{locale}' voice cannot read",
+        )
+
+
+def validate_phoneme_output(text: str, locale: str, phonemes: str) -> str:
+    """Strip markers and refuse a phoneme string that spells the text out.
+
+    The single implementation of the output half of the marker policy, shared by
+    the converter and by the engine's fused (self-phonemising) path so the two
+    cannot drift. Returns the marker-free phonemes, or raises
+    :class:`UnsupportedLanguageError`.
+    """
+    clean, markers = strip_language_markers(phonemes or "")
+    if markers and marks_spelling_fallback(text, len(markers) // 2):
+        raise UnsupportedLanguageError(
+            locale,
+            "the phonemizer fell back to spelling the input out "
+            f"({len(markers)} language switches, e.g. {markers[:4]}); "
+            "this voice cannot read that script",
+        )
+    if not clean and (phonemes or "").strip():
+        raise UnsupportedLanguageError(
+            locale,
+            "the phonemizer produced only language-switch markers",
+        )
+    if marks_spelling_output(text, clean):
+        sample = clean.split()[:3]
+        raise UnsupportedLanguageError(
+            locale,
+            "the phonemizer emitted one syllable per character "
+            f"(e.g. {' '.join(sample)}); this voice cannot read that script",
+        )
+    return clean
 
 
 @contextmanager
@@ -142,6 +430,18 @@ class PhoneticConverter:
             r"\bPWA\b": "P W A",
             r"\bWebSocket\b": "web-socket",
             r"\bWebSockets\b": "web-sockets",
+        }
+
+        #: Exact IPA for platform brand names that a language's own G2P would
+        #: otherwise read with English phonemes. espeak-ng's French voice switches
+        #: to English for any word ending in ``-y`` (measured: ``Reactory`` ->
+        #: ``(en)ɹɪˈaktəɹi(fr)``), so the French pronunciation has to be supplied
+        #: explicitly rather than left to that heuristic. Values are injected as
+        #: protected IPA spans, so no G2P can re-interpret them. This is the
+        #: per-language lexicon entry the SPEECH-010 scope calls for, kept beside
+        #: the English builtins so it ships with every deployment.
+        self.builtin_language_ipa: dict[str, dict[str, str]] = {
+            "fr-fr": {"Reactory": "ʁeaktoʁi"},
         }
 
         # Common abbreviations
@@ -319,7 +619,11 @@ class PhoneticConverter:
         for pat, repl in self.builtin_lexicon.items():
             # Clean regex boundary for display
             clean_word = pat.replace(r"\b", "").replace(r"\B", "")
-            result[clean_word] = {"replacement": repl, "source": "builtin"}
+            result[clean_word] = {
+                "replacement": repl,
+                "source": "builtin",
+                "languages": ["en"],
+            }
 
         # Custom overrides take precedence
         for word, info in self.lexicon_snapshot().items():
@@ -336,6 +640,39 @@ class PhoneticConverter:
         self.load_lexicon()
         return self.lexicon_snapshot()
 
+    @staticmethod
+    def _language_matches(candidate: str, language: str | None) -> bool:
+        """Whether a lexicon entry's language scope covers the target language."""
+        if not candidate or not language:
+            return False
+        if candidate.strip().lower() == language.strip().lower():
+            return True
+        if engine_locale(candidate) == engine_locale(language):
+            return True
+        wanted = canonical_language(language)
+        return wanted is not None and canonical_language(candidate) == wanted
+
+    @classmethod
+    def entry_for_language(cls, info: dict, language: str | None) -> dict | None:
+        """Resolve a lexicon entry for one target language, or ``None``.
+
+        An entry with an explicit ``languages`` list applies only to those
+        languages. An entry without one is treated as English: the shipped and
+        built-in lexicons are English respellings, and applying one to French or
+        Spanish splices English phonemes into the utterance — the SPEECH-010
+        defect. An operator who wants a word pronounced in another language either
+        adds that language to ``languages`` (with a target-language ``ipa``) or
+        relies on that language's own G2P.
+        """
+        if not isinstance(info, dict):
+            return None
+        languages = info.get("languages")
+        if languages:
+            if any(cls._language_matches(str(entry), language) for entry in languages):
+                return info
+            return None
+        return info if is_english(language) else None
+
     def get_entry(self, word: str) -> dict | None:
         """Get pronunciation entry for a word."""
         self.load_lexicon()
@@ -347,19 +684,32 @@ class PhoneticConverter:
             return {"replacement": self.builtin_lexicon[raw_pat], "source": "builtin"}
         return None
 
-    def set_entry(self, word: str, replacement: str | None = None, ipa: str | None = None) -> dict:
+    def set_entry(
+        self,
+        word: str,
+        replacement: str | None = None,
+        ipa: str | None = None,
+        languages: list[str] | None = None,
+    ) -> dict:
         """Add or update a custom lexicon entry.
+
+        ``languages`` scopes the entry to one or more language tags (``["fr-FR"]``).
+        An entry without it is English-only, matching the shipped lexicon: an
+        unscoped respelling applied to another language splices English phonemes
+        into it (SPEECH-010).
 
         Copy-on-write: build the next mapping, persist it atomically, then
         publish it.  Concurrent renders keep iterating the mapping they already
         hold, so they can neither see a partial update nor trip
         ``RuntimeError: dictionary changed size during iteration``.
         """
-        entry: dict[str, str] = {}
+        entry: dict[str, object] = {}
         if replacement:
             entry["replacement"] = replacement.strip()
         if ipa:
             entry["ipa"] = ipa.strip()
+        if languages:
+            entry["languages"] = [str(language).strip() for language in languages if str(language).strip()]
 
         with self._lexicon_lock:
             updated = {**self._custom_lexicon, word: entry}
@@ -394,21 +744,35 @@ class PhoneticConverter:
         return True
 
     def normalize_text(
-        self, text: str, custom_lexicon: dict[str, str] | None = None
+        self,
+        text: str,
+        custom_lexicon: dict[str, str] | None = None,
+        language: str | None = None,
     ) -> str:
-        """Pre-process text for natural pronunciation before phonemization."""
+        """Pre-process text for natural pronunciation before phonemization.
+
+        The built-in units, abbreviations and technology lexicon are **English**
+        respellings. They apply only when ``language`` is English; otherwise the
+        word is left to the target language's own G2P, or to an explicit lexicon
+        entry (``ipa`` produces exact output). ``language=None`` keeps the legacy
+        behaviour of treating the text as English, so existing direct callers do
+        not change.
+        """
         # Auto-reload if file was edited externally on disk
         self.load_lexicon()
 
         normalized = text
+        apply_builtins = is_english(language)
 
-        # 1. Expand standard units & currency
-        for pattern, replacement in self.units.items():
-            normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+        # 1. Expand standard units & currency (English words: "kilometers")
+        if apply_builtins:
+            for pattern, replacement in self.units.items():
+                normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
 
-        # 2. Expand common abbreviations
-        for pattern, replacement in self.abbreviations.items():
-            normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+        # 2. Expand common abbreviations (English words: "Mister", "versus")
+        if apply_builtins:
+            for pattern, replacement in self.abbreviations.items():
+                normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
 
         # 3. Handle inline bracket respellings [word|respelling] where respelling is NOT IPA (/.../)
         normalized = re.sub(r"\[([^\|\]]+)\|([^/\]][^\]]*)\]", r"\2", normalized)
@@ -420,18 +784,20 @@ class PhoneticConverter:
                     pat = rf"\b{re.escape(word)}\b"
                     normalized = re.sub(pat, override, normalized)
 
-        # 5. Apply persistent custom lexicon replacements.
+        # 5. Apply persistent custom lexicon replacements for this language.
         # Iterate a snapshot: POST/DELETE /api/tts/lexicon mutate this mapping
         # from the event loop while this render runs in the inference pool.
         for word, info in self.lexicon_snapshot().items():
-            repl = info.get("replacement")
+            effective = self.entry_for_language(info, language)
+            repl = (effective or {}).get("replacement")
             if repl:
                 pat = rf"\b{re.escape(word)}\b"
                 normalized = re.sub(pat, repl, normalized)
 
-        # 6. Apply built-in domain & tech lexicon
-        for pattern, replacement in self.builtin_lexicon.items():
-            normalized = re.sub(pattern, replacement, normalized)
+        # 6. Apply built-in domain & tech lexicon (English respellings only)
+        if apply_builtins:
+            for pattern, replacement in self.builtin_lexicon.items():
+                normalized = re.sub(pattern, replacement, normalized)
 
         # 7. Clean extra whitespace
         normalized = re.sub(r"\s+", " ", normalized).strip()
@@ -452,9 +818,22 @@ class PhoneticConverter:
         - Per-request custom IPA overrides
         - Inline bracket notation: [word|/ipa/]
         - Inline SSML tag: <phoneme ph="ipa">word</phoneme>
+
+        ``language`` is a caller language tag or an engine locale; it is resolved
+        through the voice registry (``zh`` -> ``cmn``) before reaching espeak-ng.
+
+        Language-switch markers are never returned. A span espeak read in another
+        language is legitimate (a loanword); the markers are stripped as metadata.
+        When the markers show espeak *spelling the input out* — the signature of a
+        script it cannot read — the request is refused with
+        :class:`UnsupportedLanguageError` (a ``ValueError``, so HTTP 422) rather
+        than synthesising nonsense.
         """
         # Step 1: Pre-normalize text (expanding units, abbreviations, respellings)
-        normalized = self.normalize_text(text, custom_lexicon=custom_lexicon)
+        lang = engine_locale(language or "en-us")
+        normalized = self.normalize_text(
+            text, custom_lexicon=custom_lexicon, language=lang
+        )
 
         if not self.is_available:
             logger.debug("Phonetic converter unavailable; returning normalized text.")
@@ -469,12 +848,23 @@ class PhoneticConverter:
                     pat = rf"\b{re.escape(word)}\b"
                     normalized = re.sub(pat, f"[{word}|/{ipa_content}/]", normalized)
 
-        # Check persistent custom lexicon with ipa (snapshot, see normalize_text)
+        # Check persistent custom lexicon with ipa (snapshot, see normalize_text).
+        # Only entries scoped to this language apply; an English respelling must
+        # not be spliced into a French or Spanish sentence.
         for word, info in self.lexicon_snapshot().items():
-            ipa_val = info.get("ipa")
+            effective = self.entry_for_language(info, lang)
+            ipa_val = (effective or {}).get("ipa")
             if ipa_val:
                 pat = rf"\b{re.escape(word)}\b"
                 normalized = re.sub(pat, f"[{word}|/{ipa_val}/]", normalized)
+
+        # Step 2b: inject the platform's per-language brand pronunciations. These
+        # are exact IPA, wrapped so the target G2P cannot re-interpret them.
+        for word, ipa_val in (self.builtin_language_ipa.get(lang) or {}).items():
+            if f"[{word}|" in normalized:
+                continue  # an explicit lexicon entry already supplied the IPA
+            pat = rf"\b{re.escape(word)}\b"
+            normalized = re.sub(pat, f"[{word}|/{ipa_val}/]", normalized)
 
         # Step 3: Segment text into ('text', ...) and ('ipa', ...) chunks
         pattern = re.compile(
@@ -494,8 +884,15 @@ class PhoneticConverter:
         if last_idx < len(normalized):
             segments.append(("text", normalized[last_idx:]))
 
+        # Step 3b: the deterministic script guard. A span with explicit IPA needs
+        # no G2P, so only the plain-text spans are checked — that keeps an
+        # operator-supplied [word|/ipa/] usable while still refusing a Japanese
+        # sentence sent to an English voice before it costs a render.
+        ensure_text_is_readable(
+            " ".join(chunk for kind, chunk in segments if kind == "text"), lang
+        )
+
         # Step 4: Phonemize text chunks and preserve exact IPA chunks
-        lang = language.lower() if language else "en-us"
         phoneme_parts: list[str] = []
 
         try:
@@ -511,12 +908,38 @@ class PhoneticConverter:
                         if p:
                             phoneme_parts.append(p)
 
-            result = " ".join(phoneme_parts).strip()
+            raw = " ".join(phoneme_parts).strip()
+            result = validate_phoneme_output(text, lang, raw)
             logger.debug("Phonetic result: '%s'", result[:60])
             return result
+        except UnsupportedLanguageError:
+            raise
         except Exception as e:  # noqa: BLE001 - a G2P failure is reported, never swallowed
+            message = str(e)
+            if "not supported by the espeak backend" in message:
+                # The backend told us plainly that it has no voice for this code.
+                raise UnsupportedLanguageError(lang, message) from e
             logger.error("Phonetic conversion failed: %s", e)
-            raise PhoneticConversionError(str(e)) from e
+            raise PhoneticConversionError(message) from e
+
+    def phonemize_raw(self, text: str, language: str = "en-us") -> str:
+        """Phonemise one string *without* normalisation or marker cleanup.
+
+        Diagnostics only: the language-capability probe needs to see espeak's raw
+        output, markers included, to decide whether a language is usable. A render
+        path must call :meth:`convert_to_phonetic` instead.
+        """
+        if not self.is_available:
+            raise PhoneticConversionError("phonetic converter is not available")
+        lang = engine_locale(language or "en-us")
+        try:
+            with G2P_LOCK:
+                return (self._tokenizer.phonemize(text, lang=lang) or "").strip()
+        except Exception as e:  # noqa: BLE001 - reported to the caller
+            message = str(e)
+            if "not supported by the espeak backend" in message:
+                raise UnsupportedLanguageError(lang, message) from e
+            raise PhoneticConversionError(message) from e
 
 
 # Global singleton instance

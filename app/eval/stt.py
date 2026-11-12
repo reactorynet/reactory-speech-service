@@ -26,6 +26,23 @@ from typing import Protocol, runtime_checkable
 from app.services.stt_service import STTService
 
 
+#: Languages whose base-tier Whisper output picks the wrong *script*.
+#:
+#: Spelling is not content: Whisper's decoder chooses between Devanagari and
+#: Perso-Arabic for Hindi, and between Simplified and Traditional for Chinese,
+#: from acoustic evidence alone. On the pinned ``base`` model it picks Urdu for
+#: Hindi and Traditional for Chinese, so a correct render scores as a total miss
+#: against a Devanagari/Simplified reference purely because the characters differ.
+#: Each prompt below is a fixed, language-generic sentence that names the script
+#: and carries no content from the corpus; it steers character set only. Measured
+#: on ``base``: Hindi `نمستی ورنر...` -> `नमस्टी वारनर...`, Chinese `你要為Ena...`
+#: -> `你要为Ena...`. Same audio, same model, same beam width.
+SCRIPT_PROMPTS: dict[str, str] = {
+    "hi": "यह एक हिन्दी में लिखा हुआ वाक्य है।",
+    "zh": "这是一个用简体中文写的句子。",
+}
+
+
 class TranscriberUnavailable(RuntimeError):
     """Round-trip scoring was requested but no local STT model is mounted."""
 
@@ -71,9 +88,15 @@ class NullTranscriber:
 class LocalTranscriber:
     """Round-trip scoring through the local faster-whisper service."""
 
-    def __init__(self, service: STTService, model: str | None = None) -> None:
+    def __init__(
+        self,
+        service: STTService,
+        model: str | None = None,
+        script_prompts: dict[str, str] | None = None,
+    ) -> None:
         self._service = service
         self.model = model or service.default_model
+        self._script_prompts = dict(SCRIPT_PROMPTS if script_prompts is None else script_prompts)
         # Any mounted model can transcribe; ``create`` validates the requested id.
         self.available = bool(service.available_models)
 
@@ -101,6 +124,11 @@ class LocalTranscriber:
             "available": self.available,
             "model": self.model,
             "description": "local faster-whisper (CTranslate2), local_files_only, vad disabled",
+            "script_prompts": sorted(self._script_prompts),
+            "script_prompt_note": (
+                "fixed language-generic prompt per script, applied to select Simplified "
+                "Chinese / Devanagari output; it adds no corpus content"
+            ),
         }
 
     def transcribe(self, wav_bytes: bytes, language: str | None = None) -> str | None:
@@ -115,6 +143,7 @@ class LocalTranscriber:
             vad=False,
             word_timestamps=False,
             temperature=0.0,
+            initial_prompt=self._script_prompts.get((language or "").lower()),
         )
         text = result.get("text")
         return text if isinstance(text, str) else None
@@ -135,6 +164,7 @@ def build_transcriber(*, enabled: bool = True, model: str | None = None) -> Tran
 __all__ = [
     "LocalTranscriber",
     "NullTranscriber",
+    "SCRIPT_PROMPTS",
     "Transcriber",
     "TranscriberUnavailable",
     "build_transcriber",

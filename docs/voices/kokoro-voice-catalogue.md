@@ -50,6 +50,65 @@ Some languages have very little training data (French is a single voice; Mandari
 are graded C). Pronunciation quality for those languages may be limited by grapheme-to-phoneme
 coverage rather than by the model. Verify with native speakers before promising a locale.
 
+## Text front end (G2P) support — measured, not assumed
+
+The voice pack is an **acoustic** asset. It says which languages the model can render; it says
+nothing about whether the text front end can phonemise them, and on this deployment the two
+disagree. Until SPEECH-010 the service advertised every catalogue language, so a request for a
+language espeak-ng could not read produced a valid WAV of nonsense (the Japanese case: 773 KB /
+16.11 s for a 21-character sentence, made of the words "english japanese letter").
+
+`GET /api/tts/capabilities` now reports **what the phonemiser was measured able to produce**, and a
+request for a language it cannot handle returns **422** instead of audio. The matrix below is the
+measured result of `tests/test_multilingual_roundtrip.py`, which synthesises a corpus sentence and
+transcribes it with the local faster-whisper model.
+
+| Language | Voices | Engine locale | Advertised | Evidence |
+|---|---|---|---|---|
+| American English | `af_*`, `am_*` | `en-us` | yes | round-trip WER 0.17 / CER 0.11 |
+| British English | `bf_*`, `bm_*` | `en-gb` | yes | same corpus sentence, round-trips |
+| Spanish | `ef_*`, `em_*` | `es` | yes | round-trip WER 0.00 |
+| Brazilian Portuguese | `pf_*`, `pm_*` | `pt-br` | yes | round-trip WER 0.29 |
+| French | `ff_siwis` | `fr-fr` | yes | round-trip WER 0.25 |
+| Italian | `if_*`, `im_*` | `it` | yes | round-trip WER 0.00 |
+| Hindi | `hf_*`, `hm_*` | `hi` | yes | Devanagari round-trip, CER 0.04 |
+| Mandarin Chinese | `zf_*`, `zm_*` | `cmn` | yes | Chinese text returned; no espeak error |
+| Japanese | `jf_*`, `jm_*` | `ja` | **no** | espeak-ng spells the script out (8 language switches for one sentence) |
+
+**Japanese is unsupported on this build.** The voices are still present and still listed by
+`GET /api/tts/voices` — the acoustic model renders them — but espeak-ng has no usable Japanese
+dictionary, so it names each character ("japanese letter", "chinese letter") instead of reading
+it. Advertising a language is therefore tied to evidence, not to the pack.
+
+**Two guards stop a script a voice cannot read**, because the marker guard alone was not enough:
+espeak emits language-switch markers when it *knows* it is changing language, but when a Japanese
+sentence is sent to an English voice it simply transliterates each character with no markers at
+all (measured: `dʒˈæpəniːzlˌɛɾɚ` twenty-one times, 20.9 s of audio, HTTP 200).
+
+1. **Before phonemisation — script vs locale.** If the text contains a script the voice's locale
+   does not use (kana/Han for `en-*`, `es`, `it`, `fr`, `pt`…), the request is refused immediately
+   with `UnsupportedLanguageError` → **422**, with no render. Latin is accepted by every shipped
+   language, which is why `Reactory` works as a loanword in Spanish, Italian, Portuguese and Hindi.
+   Inline `[word|/ipa/]` spans are exempt: they need no G2P.
+2. **After phonemisation — the spelling signature.** A phoneme string that emits about one token
+   per source character, and whose tokens are nearly all one value cycling, is espeak reading the
+   text out letter by letter. Measured separation: legitimate sentences 0.69–1.00 distinct-token
+   ratio at ≤0.76 tokens/char; spelling fallback 0.05–0.10 distinct at 1.00 tokens/char. Language
+   switches are also counted, relative to input length, so a legitimate loanword is not refused.
+
+Both guards run on the converter path *and* on the engine's fused (self-phonemising) path, so the
+streaming and `phonetic_preprocess=false` routes cannot reach the vocoder with garbage either.
+
+Two related rules the same change pins down:
+
+- **The voice's locale is authoritative.** A caller language tag is resolved through the voice
+  registry (`zh` → `cmn`, `pt` → `pt-br`), never passed to espeak-ng verbatim. The registry is the
+  only mapping table; there is no second copy to drift.
+- **The built-in lexicon is English.** `Ree-actory`, `jay-son`, `kilometers` and the abbreviation
+  expansions apply to English voices only. Applying an English respelling to French spliced an
+  English diphthong into the sentence (`(en)ɹˈiːˈaktəɹi(fr)`). Other languages use their own G2P or
+  an explicit lexicon entry, whose `ipa` field is exact.
+
 ## Using a voice
 
 ```bash

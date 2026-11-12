@@ -537,6 +537,8 @@ def test_capabilities_reports_kokoro_engine(catalogue_client):
     assert kokoro["supports_streaming"] is True
     assert kokoro["sample_rates"] == [24000]
     assert kokoro["voice_count"] == EXPECTED_CATALOGUE_SIZE
+    # SPEECH-010: Japanese is in the voice pack but the espeak-ng front end cannot
+    # read kanji, so it is reported as unsupported instead of advertised as working.
     assert kokoro["languages"] == [
         "en-GB",
         "en-US",
@@ -544,10 +546,15 @@ def test_capabilities_reports_kokoro_engine(catalogue_client):
         "fr-FR",
         "hi",
         "it",
-        "ja",
         "pt-BR",
         "zh",
     ]
+    assert kokoro["unsupported_languages"] == ["ja"]
+    japanese = next(
+        row for row in kokoro["language_support"] if row["language"] == "ja"
+    )
+    assert japanese["supported"] is False
+    assert japanese["reason"]
 
 
 def test_capabilities_reports_custom_pack_voices():
@@ -556,7 +563,8 @@ def test_capabilities_reports_custom_pack_voices():
     kokoro = client.get("/api/tts/capabilities").json()["engines"][0]
 
     assert kokoro["voice_count"] == 2
-    assert kokoro["languages"] == ["en-US", "ja"]
+    assert kokoro["languages"] == ["en-US"]
+    assert kokoro["unsupported_languages"] == ["ja"]
     assert kokoro["available"] is True
 
 
@@ -646,19 +654,43 @@ def test_json_synthesis_emits_both_sample_rate_headers(fake_engine_client):
 # ─────────────────────────────────────────────────────────────
 
 def test_every_catalogued_voice_resolves_to_a_synthesis_call(fake_engine_service):
+    """Every *usable* voice renders; a voice whose language cannot be phonemised
+    is refused with the documented 422-class error instead of rendering nonsense.
+
+    SPEECH-010: the Japanese voices are still in the pack and still listed by
+    ``/voices``, but the espeak-ng front end spells their script out, so the
+    engine refuses them. That is the acceptance criterion (explicit refusal, not
+    garbage) and this test is what keeps it honest in both directions.
+    """
+    from app.services.g2p_capability import g2p_capability
+    from app.services.phonetic_converter import UnsupportedLanguageError
+
     voices = fake_engine_service.get_voices()
     assert len(voices) == EXPECTED_CATALOGUE_SIZE
 
+    rendered = []
+    refused = []
     for voice in voices:
+        if not g2p_capability.is_supported(voice["language"]):
+            with pytest.raises(UnsupportedLanguageError):
+                fake_engine_service.synthesize(
+                    "Hello.", voice=voice["id"], speed=1.0, phonetic_preprocess=False
+                )
+            refused.append(voice)
+            continue
         wav_bytes, duration = fake_engine_service.synthesize(
             "Hello.", voice=voice["id"], speed=1.0, phonetic_preprocess=False
         )
         assert wav_bytes.startswith(b"RIFF")
         assert duration > 0
+        rendered.append(voice)
+
+    assert refused, "the pack still ships Japanese voices and they must be refused"
+    assert {voice["language"] for voice in refused} == {"ja"}
 
     calls = fake_engine_service._kokoro.calls
-    assert [call["lang"] for call in calls] == [voice["locale"] for voice in voices]
-    for call, voice in zip(calls, voices, strict=True):
+    assert [call["lang"] for call in calls] == [voice["locale"] for voice in rendered]
+    for call, voice in zip(calls, rendered, strict=True):
         if voice["id"] in SHIPPED_VOICE_IDS:
             assert call["voice"] == voice["id"]
         else:
@@ -669,11 +701,21 @@ def test_every_catalogued_voice_resolves_to_a_synthesis_call(fake_engine_service
 
 @pytest.mark.parametrize(("language", "sample"), LANGUAGE_SAMPLES.items())
 def test_synthesis_accepts_one_voice_per_language_family(language, sample, fake_engine_service):
+    from app.services.g2p_capability import g2p_capability
+    from app.services.phonetic_converter import UnsupportedLanguageError
+
     voice_id, text = sample
     descriptor = fake_engine_service.get_voice(voice_id)
 
     assert descriptor is not None
     assert descriptor["language"] == language
+
+    if not g2p_capability.is_supported(language):
+        # The language is still in the pack, and the contract is an explicit
+        # refusal — never a valid WAV that says something else.
+        with pytest.raises(UnsupportedLanguageError):
+            fake_engine_service.synthesize(text, voice=voice_id, phonetic_preprocess=False)
+        return
 
     wav_bytes, duration = fake_engine_service.synthesize(
         text, voice=voice_id, phonetic_preprocess=False
@@ -681,6 +723,26 @@ def test_synthesis_accepts_one_voice_per_language_family(language, sample, fake_
     assert wav_bytes.startswith(b"RIFF")
     assert duration > 0
     assert fake_engine_service._kokoro.calls[-1]["lang"] == descriptor["locale"]
+
+
+def test_synthesis_of_an_unsupported_language_is_422_not_garbage(fake_engine_client):
+    """SPEECH-010 acceptance: Japanese is refused at the API boundary.
+
+    The pre-fix behaviour was a 200 with 773 KB of valid WAV that said nothing,
+    so the status code matters as much as the payload.
+    """
+    response = fake_engine_client.post(
+        "/api/tts/synthesize",
+        json={
+            "text": "リアクトリーの音声サービスはとても便利です",
+            "voice": "jf_alpha",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"].lower()
+    assert "ja" in detail
+    assert "spells" in detail or "cannot" in detail
 
 
 def test_synthesis_rejects_voice_absent_from_engine():
@@ -727,8 +789,17 @@ async def test_real_engine_exposes_whole_pack_and_synthesizes_every_language(cap
     assert len(service.voice_ids) == EXPECTED_CATALOGUE_SIZE
     assert len({voice["language"] for voice in service.get_voices()}) == 9
 
+    from app.services.g2p_capability import g2p_capability
+    from app.services.phonetic_converter import UnsupportedLanguageError
+
     with caplog.at_level(logging.WARNING):
         for language, (voice_id, text) in LANGUAGE_SAMPLES.items():
+            if not g2p_capability.is_supported(language):
+                # SPEECH-010: explicitly unsupported, not silently broken. The
+                # measured reason is in GET /api/tts/capabilities.
+                with pytest.raises(UnsupportedLanguageError):
+                    service.synthesize(text, voice=voice_id, speed=1.0)
+                continue
             wav_bytes, duration = service.synthesize(text, voice=voice_id, speed=1.0)
             assert wav_bytes.startswith(b"RIFF"), language
             assert duration > 0, language
@@ -766,3 +837,44 @@ def test_no_engine_maps_two_voices_onto_the_same_engine_voice_id():
         "two voices share an engine_voice_id, so the cache key (which excludes "
         "the locale) cannot distinguish them: " + "; ".join(collisions)
     )
+
+@pytest.mark.parametrize(
+    ("label", "text", "voice"),
+    [
+        ("japanese on an english voice", "リアクトリーの音声サービスはとても便利です", "af_heart"),
+        ("japanese on the default voice", "リアクトリーの音声サービスはとても便利です", None),
+        ("mixed english and japanese", "Hello Reactory, リアクトリーの音声です", "af_heart"),
+        ("chinese on an english voice", "你好，今天我能帮你做什么？", "af_heart"),
+    ],
+)
+def test_wrong_script_for_a_voice_is_422_and_never_renders(
+    label, text, voice, fake_engine_service, fake_engine_client
+):
+    """SPEECH-010 F1 at the API boundary.
+
+    The reviewer's reproduction: the same 21-character Japanese sentence sent to
+    ``af_heart`` rendered 1,004,588 bytes / 20.93 s with a 200 because espeak
+    emits no language-switch markers to count for an English voice. The request
+    must now be refused before the model is touched — asserted through the fake
+    model's call log, not just the status code.
+    """
+    body: dict = {"text": text}
+    if voice is not None:
+        body["voice"] = voice
+
+    response = fake_engine_client.post("/api/tts/synthesize", json=body)
+
+    assert response.status_code == 422, response.text
+    assert "script" in response.json()["detail"].lower()
+    assert fake_engine_service._kokoro.calls == [], f"{label} reached the model"
+
+
+def test_phonemize_refuses_a_script_the_voice_cannot_read(fake_engine_client):
+    """The same guard on ``POST /api/tts/phonemize``."""
+    response = fake_engine_client.post(
+        "/api/tts/phonemize",
+        json={"text": "リアクトリーの音声サービスはとても便利です", "voice": "af_heart"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "script" in response.json()["detail"].lower()

@@ -69,6 +69,24 @@ def _queue_depth(engines: dict[str, EngineHealth]) -> int:
     return sum(row.queue_depth for row in engines.values())
 
 
+def _g2p_report(tts_service: Any) -> dict[str, Any] | None:
+    """Measured text-front-end support, or ``None`` when the service has no probe.
+
+    This is the runtime half of the SPEECH-010 signal: a language the voice pack
+    advertises but the phonemizer cannot read is listed here with its reason,
+    instead of only being discovered when a render comes back as nonsense.
+    """
+    getter = getattr(tts_service, "g2p_capabilities", None)
+    if not callable(getter):
+        return None
+    try:
+        payload = getter()
+    except Exception:  # pragma: no cover - health must never fail the probe
+        logger.warning("Could not read G2P capability report", exc_info=True)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
     """Health check — service status, engine availability and queue depth."""
@@ -82,6 +100,7 @@ async def health(request: Request) -> HealthResponse:
         engines=engines,
         queue_depth=_queue_depth(engines),
         cache=_cache_stats(tts_service),
+        g2p=_g2p_report(tts_service),
     )
 
 

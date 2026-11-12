@@ -170,6 +170,7 @@ def build_report(
     config: dict[str, Any] | None = None,
     environment: dict[str, Any] | None = None,
     generated_at: str | None = None,
+    skipped: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """Assemble the report payload.
 
@@ -304,8 +305,10 @@ def build_report(
         "cells": rounded_cells,
         "routing": routing,
         "failures": failures,
+        "skipped": list(skipped),
         "status": {
             "cells": len(rounded_cells),
+            "cells_skipped": len(list(skipped)),
             "entries": sum(len(cell["entries"]) for cell in rounded_cells),
             "integrity_failures": len(integrity),
             "quality_failures": len(quality),

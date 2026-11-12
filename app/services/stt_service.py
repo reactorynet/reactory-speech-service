@@ -338,6 +338,7 @@ class STTService:
         word_timestamps: bool | None = None,
         vad: bool | None = None,
         temperature: float | None = None,
+        initial_prompt: str | None = None,
     ) -> dict:
         """Transcribe audio bytes to text.
 
@@ -353,6 +354,10 @@ class STTService:
                 audio the fallback samples, so two identical inputs can transcribe
                 differently. The evaluation harness passes ``0.0`` to make round-trip
                 WER reproducible.
+            initial_prompt: Optional decoder prompt. The evaluation harness uses a
+                fixed, language-generic sentence to select the script Whisper should
+                emit for Hindi (Devanagari, not Perso-Arabic) and Chinese (Simplified,
+                not Traditional). It biases character set, not content.
 
         Returns:
             Dict with keys: text, language, language_confidence,
@@ -365,7 +370,7 @@ class STTService:
             case the original audio was transcribed.
         """
         with self._transcription(
-            audio_bytes, language, model, word_timestamps, vad, temperature
+            audio_bytes, language, model, word_timestamps, vad, temperature, initial_prompt
         ) as run:
             segments: list[dict] = []
             text_parts: list[str] = []
@@ -392,7 +397,7 @@ class STTService:
         exhausted *or* closed — closing is what happens on a client disconnect.
         """
         with self._transcription(
-            audio_bytes, language, model, word_timestamps, vad, temperature
+            audio_bytes, language, model, word_timestamps, vad, temperature, None
         ) as run:
             accumulated: list[str] = []
             for payload in run:
@@ -417,6 +422,7 @@ class STTService:
         word_timestamps: bool | None,
         vad: bool | None,
         temperature: float | None = None,
+        initial_prompt: str | None = None,
     ) -> Iterator[_TranscriptionRun]:
         """Own the temp file for the whole duration of one transcription.
 
@@ -457,6 +463,8 @@ class STTService:
             if temperature is not None:
                 # A scalar disables faster-whisper's sampled fallback ladder.
                 kwargs["temperature"] = float(temperature)
+            if initial_prompt:
+                kwargs["initial_prompt"] = initial_prompt
 
             raw_segments, info = whisper.transcribe(source, **kwargs)
             logger.debug(

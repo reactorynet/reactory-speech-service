@@ -208,6 +208,7 @@ def _run(args: argparse.Namespace) -> int:
         config={"voices": args.voices, **config.as_dict()},
         environment=metadata["environment"],
         generated_at=_timestamp() if args.stamp else None,
+        skipped=runner.skipped,
     )
 
     out_path = write_report(report, args.out)
@@ -221,6 +222,11 @@ def _run(args: argparse.Namespace) -> int:
             _print("")
             _print("routing")
             _print(routing)
+        if report.get("skipped"):
+            _print("")
+            _print("skipped (unsupported by the text front end)")
+            for row in report["skipped"]:
+                _print(f"  {row['language']:5} {row['voice']:14} {row.get('reason') or ''}")
         if report["failures"]:
             _print("")
             _print("failures")
@@ -360,10 +366,13 @@ def _route(args: argparse.Namespace) -> int:
             capabilities[str(engine["id"])] = engine
 
     if args.matrix:
+        # Default to the corpus, not a hand-maintained list: a language added to
+        # the corpus must appear in the routing matrix, and a hard-coded list is
+        # how ``pt``/``it``/``hi`` fell out of it when the corpus grew.
         languages = (
             [part.strip() for part in str(args.languages).split(",") if part.strip()]
             if args.languages
-            else ["en", "fr", "ja", "zh", "es"]
+            else load_corpus().languages
         )
         decisions = policy.matrix(
             languages, available=available, capabilities=capabilities, scores=scores

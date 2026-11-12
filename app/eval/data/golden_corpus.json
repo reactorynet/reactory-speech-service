@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Golden corpus for the Reactory speech evaluation harness (SPEECH-007). Representative Reactory sentences: short greetings, long narration, domain vocabulary, numbers, dates, abbreviations and five languages. Every entry is rendered by every configured engine+voice for its language, transcribed by the local STT service and scored for round-trip intelligibility, duration and prosody. `use` is the intended use of the sentence; `max_wer` is the quality target used by `python -m app.eval run --fail-on-wer` (it is a target, not a promise: the multilingual entries currently fail and are the evidence for SPEECH-010).",
+  "description": "Golden corpus for the Reactory speech evaluation harness (SPEECH-007). Representative Reactory sentences: short greetings, long narration, domain vocabulary, numbers, dates, abbreviations and eight languages (nine voice locales, counting en-US and en-GB). Every entry is rendered by every configured engine+voice for its language, transcribed by the local STT service and scored for round-trip intelligibility, duration and prosody. `use` is the intended use of the sentence; `max_wer` is the quality target used by `python -m app.eval run --fail-on-wer` (it is a target, not a promise: the multilingual entries currently fail and are the evidence for SPEECH-010).",
   "metrics_note": "WER is computed over whitespace tokens for space-delimited languages and over characters for Japanese and Chinese; CER is always over characters. Both are computed after Unicode NFKC normalisation, case folding and punctuation removal.",
   "entries": [
     {
@@ -178,6 +178,30 @@
       "use": "long narration",
       "tags": ["narration", "long"],
       "max_wer": 0.4
+    },
+    {
+      "id": "pt-greeting-short",
+      "text": "Olá Werner, como posso ajudar você hoje?",
+      "language": "pt",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "it-greeting-short",
+      "text": "Ciao Werner, come posso aiutarti oggi?",
+      "language": "it",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.4
+    },
+    {
+      "id": "hi-greeting-short",
+      "text": "नमस्ते वर्नर, मैं आपकी कैसे मदद कर सकता हूँ?",
+      "language": "hi",
+      "use": "short greeting",
+      "tags": ["greeting", "short"],
+      "max_wer": 0.5
     }
   ]
 }

@@ -151,6 +151,7 @@ def _converter_with(tokenizer) -> PhoneticConverter:
     converter._tokenizer = tokenizer
     converter._ready = True
     converter.builtin_lexicon = {}
+    converter.builtin_language_ipa = {}
     converter.abbreviations = {}
     converter.units = {}
     converter._custom_lexicon = {}

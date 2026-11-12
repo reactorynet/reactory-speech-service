@@ -18,6 +18,11 @@ models/*.bin
 models/*.pt
 models/faster-whisper-*/
 models/whisper-*/
+# A symlinked model directory is a symlink to git, not a directory, so the
+# trailing-slash patterns above miss it; `models/whisper-base -> ...` showed up
+# as untracked. Match the name with or without a trailing slash.
+models/whisper-*
+models/faster-whisper-*
 
 # IDE
 .idea/

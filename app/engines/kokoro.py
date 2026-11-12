@@ -36,10 +36,13 @@ from app.core.contracts import (
 )
 from app.engines.base import EngineUnavailableError, UnknownVoiceError, lower_direction
 from app.services import voice_registry
+from app.services.g2p_capability import g2p_capability
 from app.services.phonetic_converter import (
     PhoneticConversionError,
+    ensure_text_is_readable,
     g2p_lock,
     phonetic_converter,
+    validate_phoneme_output,
 )
 from app.services import designed_voices
 from app.services.designed_voices import normalised_components, recipe_hash
@@ -52,6 +55,7 @@ from app.services.voice_registry import (
     KOKORO_STYLES,
     build_catalogue,
     catalogue_languages,
+    engine_locale,
 )
 
 logger = logging.getLogger(__name__)
@@ -490,14 +494,34 @@ class KokoroEngine:
     # ------------------------------------------------------------------
 
     def capabilities(self) -> EngineCapabilities:
-        """Describe Kokoro's native capability matrix.
+        """Describe Kokoro's *phonemizer-verified* capability matrix.
+
+        ``languages`` used to be read straight from the voice catalogue, so the
+        service advertised Japanese although the text front end could not read
+        kanji (SPEECH-010). It now reports only languages the G2P backend was
+        measured able to phonemise; the rest are listed in
+        ``unsupported_languages`` with a reason.
 
         Native rate (``speed``) only: no pitch, volume, emotion, SSML or cloning.
         """
         voices = self.voices()
+        advertised = catalogue_languages(voices)
+        support_rows = {row.language: row for row in g2p_capability.report().values()}
+        supported = [
+            language
+            for language in advertised
+            if language not in support_rows or support_rows[language].supported
+        ]
+        unsupported = [language for language in advertised if language not in supported]
         return EngineCapabilities(
             engine=self.id,
-            languages=catalogue_languages(voices),
+            languages=supported,
+            unsupported_languages=unsupported,
+            language_support=[
+                support_rows[language].as_dict()
+                for language in advertised
+                if language in support_rows
+            ],
             native_rate=True,
             native_pitch=False,
             native_volume=False,
@@ -509,6 +533,17 @@ class KokoroEngine:
             max_chars=self.max_chars,
             gpu_required=False,
         )
+
+    def g2p_support(self, language: str | None) -> tuple[bool, str | None]:
+        """Whether this engine's text front end can phonemise ``language``.
+
+        Used by the evaluation harness to skip (and record) a language the
+        pipeline cannot render, instead of measuring fluent nonsense.
+        """
+        support = g2p_capability.support_for(engine_locale(language))
+        if support is None:
+            return True, None
+        return support.supported, support.reason
 
     def descriptor(self) -> dict[str, Any]:
         """The Phase 0 capability payload plus the Phase 1 contract fields.
@@ -524,6 +559,8 @@ class KokoroEngine:
             "available": self.is_ready,
             "license": self.license,
             "languages": capabilities.languages,
+            "unsupported_languages": capabilities.unsupported_languages,
+            "language_support": capabilities.language_support,
             "voice_count": len(self.voices()),
             "default_voice": voice_registry.default_voice_id(),
             "native_rate": capabilities.native_rate,
@@ -585,6 +622,10 @@ class KokoroEngine:
         voice_key, locale = self.resolve_voice(req.voice)
         voice_arg, _ = self.resolve_voice_argument(req.voice)
         rate = self._rate_for(plan)
+        if not req.is_phonemes:
+            # A language the text front end cannot read is a 422, never fluent
+            # nonsense. Caller-supplied phonemes need no G2P and are not gated.
+            g2p_capability.ensure_supported(locale)
 
         samples, sample_rate = self._render(
             req.text,
@@ -621,6 +662,8 @@ class KokoroEngine:
         voice_key, locale = self.resolve_voice(req.voice)
         voice_arg, _ = self.resolve_voice_argument(req.voice)
         rate = self._rate_for(plan)
+        if not req.is_phonemes:
+            g2p_capability.ensure_supported(locale)
         samples, sample_rate = self._render(
             text,
             voice=voice_arg,
@@ -728,6 +771,12 @@ class KokoroEngine:
         """
         tokenizer = getattr(model, "tokenizer", None)
         phonemize = getattr(tokenizer, "phonemize", None)
+
+        # A script the voice cannot read is refused before either branch runs: the
+        # fused ``create(is_phonemes=False)`` branch below has no phoneme string to
+        # inspect afterwards, so the check cannot live only on the output side.
+        ensure_text_is_readable(text, locale)
+
         if not callable(phonemize):
             logger.debug(
                 "Model %s exposes no tokenizer; phonemising inside create() under G2P_LOCK",
@@ -741,7 +790,12 @@ class KokoroEngine:
         with g2p_lock():
             phonemes = phonemize(text, lang=locale)
         # Lock released before inference: the whole point of splitting the steps.
-        return model.create(phonemes, voice=voice, speed=rate, lang=locale, is_phonemes=True)
+
+        # This path bypasses the converter, so it applies the *same* guard the
+        # converter applies: strip espeak's ``(en)``/``(ja)`` markers, and refuse
+        # a phoneme string that spells the text out one syllable per character.
+        clean = validate_phoneme_output(text, locale, phonemes or "")
+        return model.create(clean, voice=voice, speed=rate, lang=locale, is_phonemes=True)
 
     # ------------------------------------------------------------------
     # Helpers
