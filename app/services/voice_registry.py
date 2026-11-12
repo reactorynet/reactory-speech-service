@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -367,6 +367,26 @@ UNGRADED_VOICE_IDS: tuple[str, ...] = tuple(
 )
 
 
+#: Hook through which the designed-voice store contributes records.
+#:
+#: ``voice_registry`` and ``designed_voices`` used to import each other (each
+#: function-locally, to dodge the load-time cycle), which is a cycle all the
+#: same: any refactor that hoisted either import to module level would break
+#: startup, and static analysis cannot verify the ordering.  The dependency now
+#: runs one way only -- ``designed_voices`` registers a lookup callable here at
+#: import time, and this module never mentions it by name.
+#:
+#: ``None`` simply means "no designed voices loaded", so a process that never
+#: imports the store still resolves pack voices correctly.
+_record_lookup: Callable[[str], "VoiceRecord | None"] | None = None
+
+
+def set_record_lookup(lookup: Callable[[str], "VoiceRecord | None"] | None) -> None:
+    """Register (or clear) the designed-voice lookup used by :func:`get_record`."""
+    global _record_lookup
+    _record_lookup = lookup
+
+
 def get_record(voice_id: str) -> VoiceRecord | None:
     """Return the record for a voice id, or ``None``.
 
@@ -379,10 +399,11 @@ def get_record(voice_id: str) -> VoiceRecord | None:
     record = VOICE_REGISTRY.get(voice_id)
     if record is not None:
         return record
+    lookup = _record_lookup
+    if lookup is None:
+        return None
     try:
-        from app.services.designed_voices import get_store
-
-        return get_store().get(voice_id)
+        return lookup(voice_id)
     except Exception:  # pragma: no cover - defensive: never break pack voices
         logger.warning(
             "Designed-voice registry lookup failed for %r; treating it as unknown.",

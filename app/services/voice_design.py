@@ -68,6 +68,33 @@ def _slug(name: str) -> str:
     return slug[:48]
 
 
+def _safe_preview_path(preview_dir: Path, name: str) -> Path | None:
+    """Resolve ``name`` to a file directly inside ``preview_dir``, or ``None``.
+
+    ``preview.file`` is read back from the persisted registry JSON, which lives
+    on disk and can be edited outside this process.  Joining it onto the
+    preview directory and calling ``read_bytes()`` or ``unlink()`` would let a
+    corrupted or hand-edited registry name a file outside that directory.
+
+    A preview is always a bare filename, so anything that is not one -- a path
+    separator, an absolute path, a ``..`` segment -- is treated as absent
+    rather than resolved.  The containment check afterwards is belt and braces
+    for platforms where a bare name can still escape (e.g. a symlinked entry).
+    """
+    if not name or "\x00" in name:
+        return None
+    # A bare filename is its own basename. '../x' -> 'x', 'a/b' -> 'b',
+    # '/etc/passwd' -> 'passwd' and '..' -> '', so any of those fail here.
+    if name != Path(name).name:
+        return None
+    try:
+        candidate = (preview_dir / name).resolve()
+        candidate.relative_to(preview_dir.resolve())
+    except (OSError, ValueError):
+        return None
+    return candidate
+
+
 def _dedupe_tags(tags: list[str] | None) -> list[str]:
     seen: list[str] = []
     for tag in tags or []:
@@ -353,7 +380,7 @@ class VoiceDesignService:
         )
         designed_voices.get_store().add(entry)
         logger.info(
-            "Designed blend voice %r created from %s",
+            "Designed blend voice %r created from %r",
             voice_id,
             ", ".join(
                 f"{component['voice']}@{component['weight']:g}"
@@ -386,7 +413,7 @@ class VoiceDesignService:
             direction=direction,
         )
         designed_voices.get_store().add(entry)
-        logger.info("Designed base alias %r created for %s", voice_id, base_voice)
+        logger.info("Designed base alias %r created for %r", voice_id, base_voice)
         await self._preview_best_effort(voice_id)
         return self.descriptor(voice_id) or self._descriptor_from_entry(entry)
 
@@ -453,7 +480,7 @@ class VoiceDesignService:
             await self.ensure_preview(voice_id)
         except Exception as exc:  # noqa: BLE001 - creation must still succeed
             logger.warning(
-                "Preview for designed voice %r will be generated on first request: %s",
+                "Preview for designed voice %r will be generated on first request: %r",
                 voice_id,
                 exc,
             )
@@ -474,10 +501,10 @@ class VoiceDesignService:
         preview_dir = resolve_preview_dir(store.path)
 
         if not force and preview.get("recipe_hash") == current_hash:
-            file_name = preview.get("file")
-            if file_name:
+            cached_path = _safe_preview_path(preview_dir, str(preview.get("file") or ""))
+            if cached_path is not None:
                 try:
-                    audio = (preview_dir / file_name).read_bytes()
+                    audio = cached_path.read_bytes()
                 except OSError:
                     audio = b""
                 if audio:
@@ -508,10 +535,12 @@ class VoiceDesignService:
         # leave an orphan WAV behind until the voice is deleted.
         stale = preview.get("file")
         if stale and stale != file_name:
-            try:
-                (preview_dir / stale).unlink(missing_ok=True)
-            except OSError:  # pragma: no cover - best effort cleanup
-                logger.warning("Could not remove stale preview %s", stale)
+            stale_path = _safe_preview_path(preview_dir, str(stale))
+            if stale_path is not None:
+                try:
+                    stale_path.unlink(missing_ok=True)
+                except OSError:  # pragma: no cover - best effort cleanup
+                    logger.warning("Could not remove stale preview %r", stale)
 
         store.update(
             voice_id,
@@ -569,8 +598,17 @@ class VoiceDesignService:
     @staticmethod
     def _remove_previews(store_path: Path, voice_id: str) -> None:
         preview_dir = resolve_preview_dir(store_path)
-        for candidate in preview_dir.glob(f"{voice_id}-*.wav"):
+        # A glob pattern is a path expression too: an id containing a separator
+        # or '..' would widen it beyond this directory.  voice_id is slugged on
+        # creation, but this also runs for ids read back from the registry file.
+        safe_id = _slug(voice_id)
+        if not safe_id:
+            return
+        root = preview_dir.resolve()
+        for candidate in preview_dir.glob(f"{safe_id}-*.wav"):
             try:
+                if candidate.resolve().parent != root:
+                    continue
                 candidate.unlink()
             except OSError:  # pragma: no cover - best effort cleanup
-                logger.warning("Could not remove preview %s", candidate)
+                logger.warning("Could not remove preview for %r", voice_id)

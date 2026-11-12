@@ -571,3 +571,21 @@ def preset_voice_ids(path: str | Path | None = None) -> tuple[str, ...]:
     """Ids of the shipped preset voices in ``path`` (default: the shipped file)."""
     store = DesignedVoiceStore(path or DEFAULT_DESIGNED_VOICES_PATH)
     return store.preset_ids()
+
+
+# ---------------------------------------------------------------------------
+# Registration
+#
+# ``voice_registry.get_record`` resolves designed voices through a hook rather
+# than importing this module, so the dependency runs one way and there is no
+# cycle.  Registering at import time means any process that can see designed
+# voices has already imported this module -- which is exactly the set of
+# processes that should resolve them.
+# ---------------------------------------------------------------------------
+def _register_lookup() -> None:
+    from app.services import voice_registry as _voice_registry
+
+    _voice_registry.set_record_lookup(lambda voice_id: get_store().get(voice_id))
+
+
+_register_lookup()
