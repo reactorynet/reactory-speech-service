@@ -317,6 +317,13 @@ async def list_voices(
 
     ``available`` reports whether the engine is actually loaded: when it is not,
     the catalogue is the registry's manifest and synthesis will return 503.
+
+    Every row carries ``license`` and ``attribution``, including the Kokoro rows
+    with the flag off: each registry record declares its own provenance, so the
+    keys are additive rather than engine-specific. That makes the
+    permissive-licence requirement (ADR-0001) checkable from one response without
+    a second lookup. Clients written before those keys existed are unaffected —
+    they are additional fields on the row.
     """
     tts_service = request.app.state.tts_service
     voices = filter_catalogue(
@@ -350,9 +357,21 @@ async def get_voice(voice_id: str, request: Request) -> VoiceInfo:
     return VoiceInfo(**voice)
 
 
-@router.get("/capabilities", response_model=CapabilitiesResponse)
+@router.get(
+    "/capabilities",
+    response_model=CapabilitiesResponse,
+    # Optional keys (compute_cost, capability_notes, ...) are omitted when an
+    # engine has none, so the default Kokoro payload is byte-for-byte the shape
+    # it had before the expressive engine existed.
+    response_model_exclude_none=True,
+)
 async def capabilities(request: Request) -> CapabilitiesResponse:
-    """Report the capability matrix of every TTS engine in this deployment."""
+    """Report the capability matrix of every TTS engine in this deployment.
+
+    With the expressive engine registered, its row carries a measured
+    ``compute_cost`` advisory: at RTF 0.13 the routing signal is cost per second
+    of audio, not ``native_rate``.
+    """
     tts_service = request.app.state.tts_service
     return CapabilitiesResponse(
         engines=[EngineCapabilities(**row) for row in tts_service.capability_matrix()]
@@ -641,6 +660,7 @@ async def tts_stream(websocket: WebSocket) -> None:
                     voice=voice,
                     engine=engine_override,
                     direction=effective_direction,
+                    streaming=True,
                 )
             except ValueError as exc:
                 await websocket.send_json({"error": str(exc)})

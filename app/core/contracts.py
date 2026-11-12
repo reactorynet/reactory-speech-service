@@ -120,6 +120,19 @@ class EngineCapabilities(BaseModel):
     sample_rates: list[int] = Field(default_factory=list)
     max_chars: int | None = None
     gpu_required: bool = False
+    #: Licence of the engine weights (e.g. ``MIT``).  Surfaced so a deployment
+    #: can prove it only ships permissively licensed models (ADR-0001).
+    attribution: str | None = None
+    variant: str | None = None
+    #: Measured compute-cost advisory.  At an RTF well above zero the routing
+    #: signal is cost-per-second of audio, not ``native_rate``.  ``None`` when
+    #: the engine has no measured advisory (Kokoro).
+    compute_cost: dict[str, Any] | None = None
+    #: Human-readable caveats a caller must know before routing here (e.g. a
+    #: capability the engine has but this service does not expose yet).
+    capability_notes: list[str] | None = None
+    #: Paralinguistic tags the engine understands, e.g. ``[laugh]``.
+    supports_paralinguistic_tags: list[str] | None = None
 
 
 class EngineRequest(BaseModel):
@@ -182,6 +195,8 @@ class VoiceDescriptor(TypedDict):
 
     ``quality`` is ``None`` when the catalogue of record does not grade the
     voice; ``locale`` is the code handed to the engine for phonemisation.
+    ``license`` and ``attribution`` are the engine/voice provenance required by
+    ADR-0001 (permissive licences only) and are surfaced by ``/api/tts/voices``.
     """
 
     id: str
@@ -192,6 +207,8 @@ class VoiceDescriptor(TypedDict):
     engine: str
     quality: str | None
     tags: list[str]
+    license: str
+    attribution: str
 
 
 @runtime_checkable

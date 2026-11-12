@@ -39,6 +39,35 @@ jobs:
       - name: Test
         run: pytest -v -m "not slow"
 
+  expressive-deps:
+    name: speech-expressive requirements resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # chatterbox-tts 0.1.7 pins torch==2.6.0 and torchaudio==2.6.0 exactly.
+      # A pin that cannot resolve makes the speech-expressive image unbuildable,
+      # and that failure is invisible to the default-image test suite. This step
+      # resolves the whole graph without installing it.
+      - name: Resolve the expressive profile
+        run: |
+          python -m pip install --upgrade pip
+          pip install --dry-run -r requirements-expressive.txt
+
+      # Proves the CPU wheels are chosen: the plain manylinux torch wheel pulls
+      # ~11 nvidia-*-cu12 packages into an image that must never need a GPU.
+      - name: Assert the resolution is CPU-only
+        run: |
+          pip install --dry-run -r requirements-expressive.txt 2>&1 | tee /tmp/resolve.log
+          if grep -q "^Would install.* nvidia-" /tmp/resolve.log; then
+            echo "FAIL: CUDA packages resolved into the expressive profile"; exit 1
+          fi
+          grep -q "torch-2.6.0+cpu" /tmp/resolve.log
+
   image-size:
     name: speech-core image size
     runs-on: ubuntu-latest

@@ -86,6 +86,21 @@ class Settings(BaseSettings):
     # 510*1*256 float32 = ~522 KB, so 64 entries is ~33 MB worst case.
     designed_voice_tensor_cache_size: int = 64
 
+    # TTS — Phase 4 (SPEECH-005): optional expressive engine (Chatterbox, MIT).
+    #
+    # Off by default.  When false the adapter module is never imported and the
+    # engine is never registered, so the default speech-core deployment behaves
+    # exactly as before and needs neither torch nor the 3.1 GB weights.
+    chatterbox_enabled: bool = False
+    #: ``standard`` (ChatterboxTTS) or ``turbo`` (ChatterboxTurboTTS).  There is
+    #: no "Nano" class in chatterbox-tts 0.1.7; see the measurements page.
+    chatterbox_variant: str = "standard"
+    chatterbox_device: str = "cpu"
+    #: Weights live in the models volume and are downloaded on demand, never at
+    #: container build time.  The directory carries a manifest.json with the
+    #: licence (MIT) and a SHA-256 per file.
+    chatterbox_model_dir: str = "models/chatterbox"
+
     # Models
     models_dir: str = "models"
 
@@ -106,6 +121,10 @@ class Settings(BaseSettings):
     @property
     def speech_cache_dir_resolved(self) -> Path:
         return Path(self.speech_cache_dir)
+
+    @property
+    def chatterbox_model_dir_resolved(self) -> Path:
+        return Path(self.chatterbox_model_dir)
 
     @property
     def designed_voices_resolved(self) -> Path:

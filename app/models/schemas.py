@@ -171,6 +171,14 @@ class VoiceInfo(BaseModel):
         default_factory=list,
         description="Filterable tags (gender, language, region, grade-*, recommended, unrated)",
     )
+    license: str | None = Field(
+        default=None,
+        description="Licence of the engine weights that render this voice (e.g. 'MIT', 'Apache-2.0')",
+    )
+    attribution: str | None = Field(
+        default=None,
+        description="Attribution required by the engine licence (e.g. 'Chatterbox (Resemble AI)')",
+    )
 
 
 class VoicesResponse(BaseModel):
@@ -360,6 +368,35 @@ class EngineCapabilities(BaseModel):
     max_chars: int | None = None
     gpu_required: bool = False
     speed_range: list[float] = Field(default_factory=list)
+    attribution: str | None = Field(
+        default=None, description="Attribution required by the engine licence"
+    )
+    variant: str | None = Field(
+        default=None, description="Engine variant/model size where one exists (e.g. 'standard', 'turbo')"
+    )
+    compute_cost: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Measured compute-cost advisory. At a realtime factor well above zero the "
+            "routing signal is cost-per-second of audio, not native_rate: a caller can "
+            "tell whether the engine suits batch narration or interactive turns."
+        ),
+    )
+    capability_notes: list[str] | None = Field(
+        default=None,
+        description="Caveats a caller must know before routing to this engine",
+    )
+    supports_paralinguistic_tags: list[str] | None = Field(
+        default=None,
+        description="Paralinguistic tags the engine understands (e.g. '[laugh]')",
+    )
+    supports_exaggeration: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the deployed variant can actually honour exaggeration. False for "
+            "Chatterbox Turbo, which accepts the argument and ignores it."
+        ),
+    )
 
 
 class CapabilitiesResponse(BaseModel):

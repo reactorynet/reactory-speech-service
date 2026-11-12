@@ -117,3 +117,148 @@ Rendered WAVs (24 kHz mono 16-bit) are kept at
 sampling path (`inference_turbo`). If it lands near RTF 0.5–1.0 the phase stays viable for narration;
 if it is also ~0.13 then CPU expressive TTS is not yet practical at this scale and the roadmap should
 say so plainly. Nano likewise requires a library version that exposes it.
+
+---
+
+## Addendum — what the adapter does with these numbers (SPEECH-005)
+
+This section was added by the SPEECH-005 implementation. The measurements above are the
+committed record from the measurement branch and are unchanged.
+
+### Variants the adapter exposes
+
+| `CHATTERBOX_VARIANT` | Class | t3 weights | Expressive styles |
+|---|---|---|---|
+| `standard` | `ChatterboxTTS` | 2.13 GB | **yes** — `exaggeration` is honoured |
+| `turbo` | `ChatterboxTurboTTS` | 1.92 GB | **no** — see below |
+
+Turbo's `generate()` *accepts* `exaggeration` and then ignores it:
+
+```
+if cfg_weight > 0.0 or exaggeration > 0.0 or min_p > 0.0:
+    logger.warning("CFG, min_p and exaggeration are not supported by Turbo version and
+                    will be ignored.")
+```
+
+and `ChatterboxTurboTTS.from_local` builds its config with `hp.emotion_adv = False`, so there is
+no emotion embedding to drive. The adapter therefore uses an explicit per-variant capability
+table (`VARIANT_SUPPORTS_EXAGGERATION`), advertises `styles: ["neutral"]` for turbo, and reports
+`style`/`intensity` in `direction_ignored`. A signature-name check would have advertised seven
+styles that do nothing.
+
+**Turbo remains unmeasured.** The RTF figures on this page are `ChatterboxTTS` only. Turbo's
+different sampling path (`inference_turbo`, one-step decoder) may be faster; nobody has measured
+it on this hardware, so the compute-cost advisory is deliberately the same conservative figure
+for both variants.
+
+### Download scope (corrected)
+
+The whole HuggingFace repository is much larger than what `from_local` reads:
+
+| Variant | Whole repository | Files `from_local` reads | Ratio |
+|---|---|---|---|
+| `standard` | 13,866,212,931 B / 18 files (13.87 GB) | 3,191,966,992 B / 5 files (3.19 GB) | 4.3× |
+| `turbo` | 4,044,184,736 B / 13 files (4.04 GB) | 2,987,680,596 B / 9 files (2.99 GB) | 1.4× |
+
+Captured 2026-11-12 from the HuggingFace API (`?blobs=true`), at `ResembleAI/chatterbox`
+@ `5bb1f6ee` and `ResembleAI/chatterbox-turbo` @ `749d1c1a`. The per-file listing is checked in
+at `tests/data/chatterbox-upstream.json`, so the required set is asserted against reality rather
+than against a fake hub that materialises whatever it is asked for.
+
+**Turbo has no `tokenizer.json`.** Its `tokenizer_config.json` declares `GPT2Tokenizer`, which
+`AutoTokenizer.from_pretrained` loads from `vocab.json` + `merges.txt`. `tokenizer.json` exists only
+in the standard repository, where `EnTokenizer` reads it. An earlier revision of the adapter
+required it for both variants, which made `CHATTERBOX_VARIANT=turbo` impossible to download, verify
+or load — the failure mode a permissive fake could not reveal.
+
+The excess is nine redundant checkpoints in `ResembleAI/chatterbox`: duplicate `*.pt` vocoders,
+the v2/v3 multilingual T3 weights, `t3_23lang`, and a second vocoder file. An earlier revision of
+this ticket said "3.1 GB" while downloading all 13.87 GB and SHA-256ing every byte of it.
+
+`scripts/download_chatterbox.py` now passes `allow_patterns` ( `VARIANT_FILES` ), records only
+those files in the manifest, and stores `download_bytes`, `repo_total_bytes` and
+`required_total_bytes` so the difference is auditable. File sizes were taken from the HuggingFace
+API (`/api/models/<repo>?blobs=true`) on 2026-11-12.
+
+### SHA-256 verification cost
+
+`ensure_available()` hashes every recorded file. At 3.19 GB that is a measurable cost on every
+cold load, on top of the 21.9 s model load:
+
+| Quantity | Value |
+|---|---|
+| Bytes hashed (`standard`) | 3,191,966,992 B (3.19 GB) |
+| Measured SHA-256 throughput | **331 MiB/s** |
+| Cost per cold verification | **~9.6 s** (3.19 GB of I/O plus hashing) |
+
+Because an idle engine is unloaded and reloaded, the result is memoised per process against a
+signature of `(file, size, mtime_ns)` plus the manifest mtime, so a reload with demonstrably
+unchanged files does not re-hash 3.19 GB. Any truncation, replacement or rewrite changes the size
+or mtime and forces a full re-verification. This does not weaken the threat model the manifest
+addresses (corruption and accidental replacement — a hostile models volume can rewrite the
+manifest too).
+
+### Verification cost
+
+Measured on the implementation host with `hashlib.sha256` over a 256 MiB buffer:
+
+```
+$ python -c "import hashlib,os,time; d=os.urandom(256*1024*1024); t=time.perf_counter(); \
+             hashlib.sha256(d).hexdigest(); e=time.perf_counter(); \
+             print(f'{256/(e-t):.0f} MiB/s -> 3.19 GB in {3191.97/(256/(e-t)):.1f} s')"
+```
+
+Recorded output:
+
+```
+$ .venv/bin/python - <<'PY'
+import hashlib, os, time
+data = os.urandom(256*1024*1024)
+t = time.perf_counter(); hashlib.sha256(data).hexdigest(); e = time.perf_counter()
+mibs = 256/(e-t)
+print(f"{mibs:.0f} MiB/s -> 3.19 GB (3191.97 MiB) in {3191.97/mibs:.1f} s")
+PY
+331 MiB/s -> 3.19 GB (3191.97 MiB) in 9.6 s
+```
+
+So a cold load costs **21.9 s of model loading plus ~9.6 s of verification** — 44% overhead. That
+is why the result is memoised rather than recomputed on every reload. On a node whose models volume
+is on spinning disk or a network mount the hashing throughput will be lower; budget accordingly, or
+keep one engine instance resident so the memo is hit.
+
+There is no environment variable to skip verification: skipping it is the failure mode the manifest
+exists to prevent.
+
+### Acceptance evidence — the style lowering is audibly different
+
+The SPEECH-005 acceptance criterion asks for rendered WAVs or a measured prosody difference
+between `style: "neutral"` and `style: "empathetic"`. The rendered artefacts from the measurement
+run are kept at:
+
+`REACTORY_DATA/profiles/reactor/personas/reactor/workspace/notes/samples/chatterbox/`
+(`exaggeration_0.0.wav`, `exaggeration_0.5.wav`, `exaggeration_1.0.wav`).
+
+Measured on those files (24 kHz mono 16-bit, same sentence and reference voice):
+
+| File | `exaggeration` | Duration | RMS | Peak | Zero-crossing rate | Correlation with 0.5 |
+|---|---|---|---|---|---|---|
+| `exaggeration_0.0.wav` | 0.00 | 10.320 s | 0.1403 | 0.957 | 0.1208 | 0.007 |
+| `exaggeration_0.5.wav` | 0.50 (neutral) | 8.880 s | 0.1440 | 1.000 | 0.1241 | 1.000 |
+| `exaggeration_1.0.wav` | 1.00 | 7.320 s | 0.1708 | 1.000 | 0.1063 | 0.011 |
+
+Near-zero waveform correlation between settings is the point: this is a different rendering, not a
+gain or filter applied to one rendering.
+
+The adapter maps `style: "neutral"` to `exaggeration=0.5` and `style: "empathetic"` to
+`exaggeration=0.62` (see `STYLE_EXAGGERATION`). 0.62 sits between the measured 0.5 and 1.0 points,
+so the measured slope bounds the expected effect:
+
+- **0.5 → 1.0:** duration −17.6%, RMS +18.6%
+- **0.5 → 0.62** (24% of that interval): **duration ≈ −4.2% (≈ −0.37 s on this sentence), RMS ≈ +4.5%**
+- **0.0 → 0.5:** duration −14.0%, RMS +2.6% — the whole scale moves pace, which is why
+  `prosody.rate` is never stacked on top of it.
+
+The exact 0.62 render has **not** been produced on this host: it is an Intel macOS machine and
+PyTorch publishes no macOS x86_64 wheel for 2.6.0, so the real backend cannot be installed here.
+The `slow` test `test_empathetic_audibly_differs_from_neutral_on_cpu` renders 0.5 and 0.62 through
+the real model and asserts a duration/RMS delta when weights are mounted; it skips otherwise.

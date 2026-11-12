@@ -416,6 +416,8 @@ def test_list_voices_descriptor_shape(catalogue_client):
         "locale": "en-us",
         "quality": "A",
         "tags": ["female", "english", "american", "grade-a", "recommended"],
+        "license": "Apache-2.0",
+        "attribution": "Kokoro-82M v1.0",
     }
 
 

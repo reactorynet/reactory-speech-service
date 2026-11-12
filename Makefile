@@ -1,4 +1,5 @@
-.PHONY: setup dev test lint docker-build docker-run image-size clean download-models
+.PHONY: setup dev test lint docker-build docker-run image-size clean download-models \
+	expressive-build expressive-run download-chatterbox
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -51,3 +52,17 @@ docker-run:
 # budget (docs/architecture/speech-platform.md). Fails the build when exceeded.
 image-size:
 	./scripts/check_image_size.sh --build
+
+# Optional expressive profile (SPEECH-005). Builds ON TOP of speech-core; the
+# default image and its size assertion are unchanged. Weights are downloaded on
+# demand into the models volume, never at build time.
+expressive-build: image-size
+	docker build -f Dockerfile.expressive -t reactory-speech-service:speech-expressive .
+
+expressive-run:
+	docker run -p 8765:8765 --env-file .env \
+		-v "$(PWD)/models/chatterbox:/app/models/chatterbox" \
+		reactory-speech-service:speech-expressive
+
+download-chatterbox:
+	$(PYTHON) scripts/download_chatterbox.py --variant standard

@@ -1,0 +1,62 @@
+{
+  "_comment": [
+    "Upstream file layout of the two Chatterbox weight repositories, captured from the",
+    "HuggingFace API (GET /api/models/<repo>?blobs=true) on 2026-11-12.",
+    "",
+    "This exists so tests can assert the adapter's VARIANT_FILES against reality",
+    "instead of against a fake that materialises whatever it is asked for. A fake",
+    "snapshot_download always creates the files it is told to fetch, so it can never",
+    "reveal that the adapter requires a file the upstream repository does not contain",
+    "(that is exactly how a phantom 'tokenizer.json' in the turbo set survived review",
+    "once). Refresh this file when upstream changes; the tests then say whether the",
+    "adapter still matches."
+  ],
+  "captured": "2026-11-12",
+  "repos": {
+    "standard": {
+      "repo_id": "ResembleAI/chatterbox",
+      "revision": "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",
+      "total_bytes": 13866212931,
+      "files": {
+        ".gitattributes": 1519,
+        "Cangjie5_TC.json": 1920163,
+        "README.md": 10081,
+        "conds.pt": 107374,
+        "grapheme_mtl_merged_expanded_v1.json": 69989,
+        "mtl_tokenizer.json": 68125,
+        "s3gen.pt": 1057165844,
+        "s3gen.safetensors": 1056484620,
+        "s3gen_v3.pt": 1056903694,
+        "s3gen_v3.safetensors": 1056381804,
+        "t3_23lang.safetensors": 2143154168,
+        "t3_cfg.pt": 1064892246,
+        "t3_cfg.safetensors": 2129653744,
+        "t3_mtl23ls_v2.safetensors": 2143989752,
+        "t3_mtl23ls_v3.safetensors": 2143989928,
+        "tokenizer.json": 25470,
+        "ve.pt": 5698626,
+        "ve.safetensors": 5695784
+      }
+    },
+    "turbo": {
+      "repo_id": "ResembleAI/chatterbox-turbo",
+      "revision": "749d1c1a46eb10492095d68fbcf55691ccf137cd",
+      "total_bytes": 4044184736,
+      "files": {
+        ".gitattributes": 1519,
+        "README.md": 9544,
+        "added_tokens.json": 418,
+        "conds.pt": 169454,
+        "merges.txt": 456318,
+        "s3gen.safetensors": 1056484620,
+        "s3gen_meanflow.safetensors": 1064875036,
+        "special_tokens_map.json": 470,
+        "t3_turbo_v1.safetensors": 1915480052,
+        "t3_turbo_v1.yaml": 8457,
+        "tokenizer_config.json": 3878,
+        "ve.safetensors": 5695784,
+        "vocab.json": 999186
+      }
+    }
+  }
+}

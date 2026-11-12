@@ -283,11 +283,29 @@ serve. An expired LRU entry is dropped and counted as an eviction rather than se
 | Profile | Contents | Approx footprint | Use |
 |---|---|---|---|
 | `speech-core` | Kokoro ONNX + faster-whisper | ~350 MB models, ≤2048 MiB image | Default, laptop, edge node |
-| `speech-expressive` | adds Chatterbox Nano/Turbo + torch | +2–3 GB | Brand voices, expressive delivery |
+| `speech-expressive` | adds Chatterbox `standard`/`turbo` (MIT) + CPU torch | +3–4 GB weights, +torch | Brand voices, expressive delivery |
 | `speech-gpu` | adds Orpheus or a large model | multi-GB, GPU | Premium acting tier |
 
 The API surface is identical across profiles. `/capabilities` reports which engines are present, so
 a client adapts rather than fails.
+
+### Expressive profile (SPEECH-005)
+
+The `speech-expressive` image extends `speech-core` (`Dockerfile.expressive`) and is the only
+profile that installs `torch` and `chatterbox-tts`. The engine is gated by `CHATTERBOX_ENABLED`,
+which defaults to **false**: with it off the adapter module is never imported, the engine is not
+registered and `/capabilities` lists only Kokoro.
+
+Measured on CPU (see [chatterbox-cpu.md](../measurements/chatterbox-cpu.md)): RTF 0.13, 3.9 GB
+resident, 21.9 s load, 24 kHz. The `/capabilities` row therefore carries a `compute_cost` advisory —
+at that realtime factor the routing signal is cost per second of audio, not `native_rate`:
+batch narration yes, interactive turns no. `exaggeration` is bounded to 0.3–0.7 and
+`prosody.rate` is never stacked on it. Production audio carries no watermark; the adapter
+replaces Chatterbox's Perth watermarker with a no-op (ADR-0003 decision 4).
+
+Weights are **never** fetched at image build time: they are downloaded on demand into the models
+volume with a manifest recording the MIT licence and a SHA-256 per file. A missing or corrupt
+model is a clear warning and a Kokoro fallback, never a 500.
 
 ### Image budget
 

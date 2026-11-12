@@ -1564,6 +1564,97 @@
         "clone": false
       },
       "enabled": true
+    },
+    {
+      "id": "chatterbox_standard",
+      "name": "Chatterbox Default",
+      "engine": "chatterbox",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "unspecified",
+      "tags": [
+        "english",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "standard"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default",
+        "variant": "standard"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "standard",
+      "model_class": "ChatterboxTTS",
+      "paralinguistic_tags": [
+        "[laugh]",
+        "[chuckle]",
+        "[cough]",
+        "[sigh]",
+        "[gasp]",
+        "[groan]",
+        "[sniff]",
+        "[clear_throat]"
+      ]
+    },
+    {
+      "id": "chatterbox_turbo",
+      "name": "Chatterbox Turbo Default",
+      "engine": "chatterbox",
+      "language": "en-US",
+      "locale": "en-us",
+      "gender": "unspecified",
+      "tags": [
+        "english",
+        "batch",
+        "cpu",
+        "mit",
+        "turbo",
+        "no-style-control"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_turbo",
+        "variant": "turbo"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": false,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "turbo",
+      "model_class": "ChatterboxTurboTTS",
+      "paralinguistic_tags": [
+        "[laugh]",
+        "[chuckle]",
+        "[cough]",
+        "[sigh]",
+        "[gasp]",
+        "[groan]",
+        "[sniff]",
+        "[clear_throat]"
+      ],
+      "style_note": "Chatterbox Turbo accepts but ignores exaggeration (hp.emotion_adv=False); it cannot render tone. Use chatterbox_standard for expressive styles."
     }
   ]
 }

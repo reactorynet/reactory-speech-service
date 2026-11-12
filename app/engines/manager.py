@@ -73,6 +73,12 @@ class EngineManager:
             tuple[int, str], tuple[asyncio.AbstractEventLoop, asyncio.Lock]
         ] = {}
         self._reaper: asyncio.Task | None = None
+        #: engine id -> the exception from the most recent failed load.
+        #:
+        #: The cause is preserved so the caller-facing fallback warning can carry
+        #: the actionable detail (model path, download command) instead of a
+        #: generic "could not be loaded" that only the log ever explains.
+        self._load_errors: dict[str, BaseException] = {}
         for engine in engines or ():
             self.register(engine)
 
@@ -214,10 +220,21 @@ class EngineManager:
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """Load up to ``max_loaded_engines`` engines; defer the rest to first use."""
+        """Load up to ``max_loaded_engines`` engines; defer the rest to first use.
+
+        An adapter may declare ``lazy_load = True`` (the optional expressive
+        engine does) to be skipped entirely at startup.  That keeps startup time
+        unchanged when the flag is on and means a missing 3.1 GB model is not
+        discovered by blocking the boot path.
+        """
         budget = self._max_loaded if self._max_loaded > 0 else len(self._engines)
         loaded = 0
-        for engine_id in self._engines:
+        for engine_id, engine in self._engines.items():
+            if getattr(engine, "lazy_load", False):
+                logger.info(
+                    "Engine '%s' is lazy-loaded; it will load on first use.", engine_id
+                )
+                continue
             if loaded >= budget:
                 logger.info(
                     "Engine '%s' is registered but not loaded; max_loaded_engines=%d. "
@@ -231,18 +248,45 @@ class EngineManager:
                 loaded += 1
 
     async def _load(self, engine_id: str) -> None:
-        """Initialise one engine, isolating (and reporting) failures."""
+        """Initialise one engine, isolating (and reporting) failures.
+
+        The failure is *recorded*, not discarded: :meth:`ensure_loaded` re-raises
+        it as the cause of its :class:`EngineUnavailableError`, so a caller who
+        removes an optional engine's model receives the actionable detail in the
+        response rather than only in the server log.
+
+        An :class:`EngineUnavailableError` is an expected, operator-actionable
+        condition (the optional model is absent, or torch is not installed).  It
+        is logged once at WARNING with no traceback: a stack trace per request
+        for a documented deployment state is noise that hides real faults.
+        """
         engine = self.require(engine_id)
         initialise = getattr(engine, "initialize", None)
         if not callable(initialise):
             return
         self._loading.add(engine_id)
+        previously_failed = engine_id in self._load_errors
         try:
             await initialise()
-        except Exception:
+        except EngineUnavailableError as exc:
+            # An expected, operator-actionable state: log it once, not per
+            # request, and never with a traceback.
+            self._load_errors[engine_id] = exc
+            if previously_failed:
+                logger.debug("TTS engine '%s' is still unavailable: %s", engine_id, exc)
+            else:
+                logger.warning("TTS engine '%s' is unavailable: %s", engine_id, exc)
+        except Exception as exc:
+            self._load_errors[engine_id] = exc
             logger.exception("Failed to initialise TTS engine '%s'", engine_id)
+        else:
+            self._load_errors.pop(engine_id, None)
         finally:
             self._loading.discard(engine_id)
+
+    def last_load_error(self, engine_id: str) -> BaseException | None:
+        """The cause of the most recent failed load for one engine, if any."""
+        return self._load_errors.get(engine_id)
 
     async def ensure_loaded(self, engine_id: str) -> TTSEngine:
         """Return a ready engine, loading it on first use.
@@ -264,9 +308,11 @@ class EngineManager:
             self._make_room(engine_id)
             await self._load(engine_id)
             if not self.is_ready(engine_id):
+                cause = self._load_errors.get(engine_id)
+                detail = f"{cause}" if cause is not None else "no model could be loaded"
                 raise EngineUnavailableError(
-                    f"TTS engine '{engine_id}' could not be loaded on this deployment"
-                )
+                    f"TTS engine '{engine_id}' could not be loaded on this deployment: {detail}"
+                ) from cause
             self.touch(engine_id)
             return engine
 
@@ -339,6 +385,7 @@ class EngineManager:
                 logger.debug("Engine '%s' has no unload hook; leaving it loaded", engine_id)
                 return False
         self._last_used.pop(engine_id, None)
+        self._load_errors.pop(engine_id, None)
         logger.info("Unloaded TTS engine '%s'", engine_id)
         return True
 
@@ -496,6 +543,11 @@ class EngineManager:
             "sample_rates": capabilities.sample_rates,
             "max_chars": capabilities.max_chars,
             "gpu_required": capabilities.gpu_required,
+            "attribution": capabilities.attribution,
+            "variant": capabilities.variant,
+            "compute_cost": capabilities.compute_cost,
+            "capability_notes": capabilities.capability_notes,
+            "supports_paralinguistic_tags": capabilities.supports_paralinguistic_tags,
         }
 
 

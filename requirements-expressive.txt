@@ -1,0 +1,54 @@
+# Optional dependencies for the `speech-expressive` profile (SPEECH-005).
+#
+# This is the **image** file: it pins the CPU-only torch build used by
+# Dockerfile.expressive. A developer on macOS uses
+# requirements-expressive-macos.txt instead, because PyTorch publishes no
+# macOS x86_64 wheel for 2.6.0 (see that file).
+#
+# NEVER add these to requirements.txt: the default speech-core image must not
+# grow or gain a torch dependency. This is asserted by tests/test_image_budget.py
+# and by scripts/check_image_size.sh.
+#
+# Installability is checked in CI with
+#     pip install --dry-run -r requirements-expressive.txt
+# because a pin that cannot resolve makes this profile unbuildable. A previous
+# revision pinned torch==2.5.1+cpu, which chatterbox-tts 0.1.7 refuses
+# (`torch==2.6.0` exactly) and made the image impossible to build at all.
+#
+# Weights are NOT downloaded here and are NOT downloaded at image build time.
+# Download them on demand into the models volume with
+#     python scripts/download_chatterbox.py --variant standard
+
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+chatterbox-tts==0.1.7
+
+# chatterbox-tts 0.1.7 declares `torch==2.6.0` and `torchaudio==2.6.0` exactly
+# (for Python < 3.14; this image is 3.11), so no other version resolves.
+#
+# The `+cpu` local version is required, not cosmetic: the plain manylinux wheel
+# on PyPI declares ~11 nvidia-*-cu12 dependencies and pulls multiple GB of CUDA
+# into an image that must never need a GPU. With the CPU index first, pip picks
+# `2.6.0+cpu` (a PEP 440 local version sorts above the plain release), and
+# chatterbox's `torch==2.6.0` requirement is still satisfied because the
+# requirement names no local version.
+#
+# uv resolves indexes with a "first index wins" policy; verify with
+#     uv pip compile requirements-expressive.txt --python-version 3.11 \
+#         --python-platform x86_64-unknown-linux-gnu --index-strategy unsafe-best-match
+torch==2.6.0+cpu
+torchaudio==2.6.0+cpu
+
+# Dependency traps, all documented in docs/measurements/chatterbox-cpu.md:
+# * numba (via librosa) imports coverage.types, which needs coverage>=7.6;
+# * resemble-perth imports pkg_resources, removed in setuptools 81+, and
+#   SWALLOWS the ImportError, leaving PerthImplicitWatermarker = None. That
+#   fails later as "TypeError: 'NoneType' object is not callable" inside the
+#   model constructor. Pinning avoids it; the adapter also maps it to a clear
+#   error and a Kokoro fallback.
+coverage>=7.6
+setuptools<81
+
+# chatterbox-tts pulls gradio and related demo tooling as runtime dependencies.
+# They are installed only in this profile, never in speech-core.

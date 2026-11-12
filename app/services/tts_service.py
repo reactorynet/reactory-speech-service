@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.config import settings
 from app.core.contracts import (
     AudioResult,
     Direction,
@@ -42,6 +43,7 @@ from app.engines.base import EngineUnavailableError, UnknownEngineError, lower_d
 from app.engines.kokoro import KokoroEngine
 from app.engines.manager import EngineManager
 from app.engines.router import EngineRouter
+from app.services import voice_registry
 from app.services.g2p_capability import g2p_capability
 from app.services.inference import InferenceExecutor
 from app.services.phonetic_converter import phonetic_converter
@@ -115,9 +117,24 @@ class TTSService:
         cache: SynthesisCache | None = None,
         executor: InferenceExecutor | None = None,
         manager: EngineManager | None = None,
+        expressive: bool | None = None,
     ) -> None:
         self._kokoro_engine = KokoroEngine()
-        self._manager = manager or EngineManager([self._kokoro_engine])
+        self._chatterbox_engine = None
+        if manager is not None:
+            self._manager = manager
+        else:
+            engines = [self._kokoro_engine]
+            enabled = settings.chatterbox_enabled if expressive is None else expressive
+            if enabled:
+                # Import the adapter only when the flag is on: with it off the
+                # module is never imported, so startup works on a deployment
+                # where torch is not installed at all.
+                from app.engines.chatterbox import ChatterboxEngine
+
+                self._chatterbox_engine = ChatterboxEngine()
+                engines.append(self._chatterbox_engine)
+            self._manager = EngineManager(engines)
         self._router = EngineRouter(
             self._manager, order=self._manager.ids or [KOKORO_ENGINE]
         )
@@ -261,14 +278,40 @@ class TTSService:
         engine: str | None = None,
         direction: Direction | None = None,
         fallback: Iterable[str] | None = None,
+        streaming: bool = False,
     ) -> DirectionPlan:
         """Report what a direction would apply, without running inference.
 
         The adapter's own lowering is used when it provides one, so the plan and
         the synthesis result cannot drift (for example on rate clamping).
+
+        ``streaming=True`` disables style-based routing: the expressive engine
+        renders complete buffers and declares ``supports_streaming=False``, so a
+        stream is served by the ordered fallback list instead of pretending the
+        style will be honoured.
         """
-        target = self._router.resolve(engine=engine, voice=voice, fallback=fallback)
-        return self._plan_for_engine(target, direction or Direction())
+        direction = direction or Direction()
+        style = None if streaming else self._requested_style(direction)
+        target = self._router.resolve(
+            engine=engine, voice=voice, fallback=fallback, style=style
+        )
+        return self._plan_for_engine(target, direction)
+
+    @staticmethod
+    def _requested_style(direction: Direction | None) -> str | None:
+        """The explicitly requested non-neutral style, or ``None``.
+
+        Only a style the caller actually expressed participates in routing.  A
+        default :class:`Direction` must not silently route away from the default
+        engine.
+        """
+        if direction is None:
+            return None
+        if "style" not in direction.model_fields_set:
+            return None
+        if direction.style in (None, "neutral"):
+            return None
+        return direction.style
 
     @staticmethod
     def _plan_for_engine(target, direction: Direction) -> DirectionPlan:
@@ -277,6 +320,55 @@ class TTSService:
         if callable(lower):
             return lower(direction)
         return lower_direction(direction, target.capabilities())
+
+    @staticmethod
+    def _default_voice_for(target) -> str | None:
+        """A voice the target engine can actually render, or ``None``.
+
+        Kokoro keeps the deployment default (``KOKORO_DEFAULT_VOICE``), so a
+        fallback does not silently change the voice a caller is used to hearing.
+
+        Every other engine is asked for *its own* first available voice.  That
+        list is the adapter's, not the registry's: the Chatterbox adapter filters
+        by the deployed ``CHATTERBOX_VARIANT``.  Reading the registry directly
+        returned ``chatterbox_standard`` on a turbo deployment, which the adapter
+        then refused as a variant mismatch — a 422 on the very fallback path that
+        is meant to degrade gracefully.
+        """
+        if str(target.id) == KOKORO_ENGINE:
+            return voice_registry.default_voice_id()
+        try:
+            ids = target.available_voice_ids()
+        except Exception:  # pragma: no cover - defensive
+            ids = []
+        if ids:
+            return ids[0]
+        return voice_registry.default_voice_for_engine(str(target.id))
+
+    def _prepare_request(
+        self, target, request: EngineRequest
+    ) -> tuple[EngineRequest, list[str], bool]:
+        """Adapt a request to a candidate engine, reporting any voice substitution.
+
+        When a request is routed to an engine other than the one that owns its
+        voice — the expressive-engine fallback is the only such path today — the
+        voice cannot be rendered as asked.  Substituting the engine's default and
+        saying so is better than a 422 or a silent timbre change.
+        """
+        voice = request.voice
+        if not voice:
+            return request, [], False
+        record = voice_registry.get_record(voice)
+        if record is None or record.engine == str(target.id):
+            return request, [], False
+        substitute = self._default_voice_for(target)
+        if substitute is None or substitute == voice:
+            return request, [], False
+        note = (
+            f"voice '{voice}' belongs to engine '{record.engine}'; engine "
+            f"'{target.id}' rendered its default voice '{substitute}' instead"
+        )
+        return request.model_copy(update={"voice": substitute}), [note], True
 
     @staticmethod
     def clamp_speed(speed: float | None) -> float:
@@ -331,17 +423,29 @@ class TTSService:
         use_cache = self._cache.enabled and cache is not False
 
         unavailable: EngineUnavailableError | None = None
-        candidates = self._router.candidates(engine=engine, voice=voice, fallback=fallback)
+        fallback_notes: list[str] = []
+        candidates = self._router.candidates(
+            engine=engine, voice=voice, fallback=fallback, style=self._requested_style(merged)
+        )
         for target in candidates:
+            target_request, voice_notes, voice_substituted = self._prepare_request(
+                target, request
+            )
             plan = self._plan_for_engine(target, merged)
-            key = self._cache_key_for(target, request)
+            if voice_substituted:
+                plan = plan.model_copy(
+                    update={"ignored": [*plan.ignored, "voice"], "warnings": [*voice_notes, *plan.warnings]}
+                )
+            key = self._cache_key_for(target, target_request)
             if use_cache and key is not None:
                 entry = await self._cache.get(key)
                 if entry is not None:
                     return SynthesisOutcome(
                         audio=entry.audio,
                         duration=entry.duration,
-                        plan=plan,
+                        plan=plan.model_copy(
+                            update={"warnings": [*fallback_notes, *plan.warnings]}
+                        ),
                         cache="hit",
                         cache_tier=entry.tier,
                         cache_key=key,
@@ -358,10 +462,13 @@ class TTSService:
             try:
                 async with limiter.slot():
                     await self._manager.ensure_loaded(target.id)
-                    result = await self._executor.run(target.synthesize, request)
+                    result = await self._executor.run(target.synthesize, target_request)
             except EngineUnavailableError as exc:
                 logger.warning("TTS engine '%s' is unavailable: %s", target.id, exc)
                 unavailable = exc
+                fallback_notes.append(
+                    f"engine '{target.id}' was unavailable ({exc}); fell back to the next engine"
+                )
                 continue
             finally:
                 self._manager.touch(target.id)
@@ -369,8 +476,10 @@ class TTSService:
             applied_plan = DirectionPlan(
                 engine=result.engine,
                 applied=result.applied,
-                ignored=result.ignored,
-                warnings=result.warnings,
+                ignored=(
+                    [*result.ignored, "voice"] if voice_substituted else list(result.ignored)
+                ),
+                warnings=[*fallback_notes, *voice_notes, *result.warnings],
             )
             if use_cache and key is not None:
                 await self._cache.put(
@@ -427,8 +536,29 @@ class TTSService:
             phonetic_preprocess=phonetic_preprocess,
             custom_lexicon=custom_lexicon,
         )
-        target = self._router.resolve(engine=engine, voice=voice, fallback=fallback)
-        await self._manager.ensure_loaded(target.id)
+        # Streaming never style-routes to the expressive engine: it renders whole
+        # buffers and declares ``supports_streaming=False``.  Voice ownership and
+        # the explicit override still decide, and an unavailable engine falls
+        # through to the next candidate rather than failing the socket.
+        target = None
+        unavailable: EngineUnavailableError | None = None
+        for candidate in self._router.candidates(
+            engine=engine, voice=voice, fallback=fallback
+        ):
+            try:
+                await self._manager.ensure_loaded(candidate.id)
+            except EngineUnavailableError as exc:
+                logger.warning("TTS engine '%s' is unavailable: %s", candidate.id, exc)
+                unavailable = exc
+                continue
+            target = candidate
+            break
+        if target is None:
+            if unavailable is not None:
+                raise unavailable
+            raise UnknownEngineError("No TTS engine could serve the stream")
+
+        request, _voice_notes, _substituted = self._prepare_request(target, request)
         limiter = self._manager.limiter(target.id)
 
         split = getattr(target, "split_sentences", None)
@@ -562,13 +692,33 @@ class TTSService:
         )
 
         unavailable: EngineUnavailableError | None = None
-        candidates = self._router.candidates(engine=engine, voice=voice, fallback=fallback)
+        fallback_notes: list[str] = []
+        candidates = self._router.candidates(
+            engine=engine, voice=voice, fallback=fallback, style=self._requested_style(merged)
+        )
         for target in candidates:
+            target_request, voice_notes, voice_substituted = self._prepare_request(
+                target, request
+            )
             try:
-                return target.synthesize(request)
+                result = target.synthesize(target_request)
             except EngineUnavailableError as exc:
                 logger.warning("TTS engine '%s' is unavailable: %s", target.id, exc)
                 unavailable = exc
+                fallback_notes.append(
+                    f"engine '{target.id}' was unavailable ({exc}); fell back to the next engine"
+                )
+                continue
+            if fallback_notes or voice_notes:
+                result = result.model_copy(
+                    update={
+                        "ignored": (
+                            [*result.ignored, "voice"] if voice_substituted else result.ignored
+                        ),
+                        "warnings": [*fallback_notes, *voice_notes, *result.warnings],
+                    }
+                )
+            return result
 
         if unavailable is not None:
             raise unavailable
@@ -605,7 +755,21 @@ class TTSService:
             phonetic_preprocess=phonetic_preprocess,
             custom_lexicon=custom_lexicon,
         )
-        target = self._router.resolve(engine=engine, voice=voice)
+        target = None
+        unavailable: EngineUnavailableError | None = None
+        for candidate in self._router.candidates(engine=engine, voice=voice):
+            if not getattr(candidate, "is_ready", False):
+                unavailable = unavailable or EngineUnavailableError(
+                    f"TTS engine '{candidate.id}' is not loaded"
+                )
+                continue
+            target = candidate
+            break
+        if target is None:
+            if unavailable is not None:
+                raise unavailable
+            raise UnknownEngineError("No TTS engine could serve the stream")
+        request, _voice_notes, _substituted = self._prepare_request(target, request)
         for chunk in target.stream(request):
             yield chunk.audio, chunk.duration
 

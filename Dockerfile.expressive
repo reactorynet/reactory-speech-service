@@ -1,0 +1,32 @@
+# speech-expressive — optional profile for the Chatterbox expressive engine.
+#
+# This image EXTENDS the default speech-core image; it does not replace it and
+# it does not change it. The default image, its startup time and its 2048 MiB
+# size ceiling are unchanged (tests/test_image_budget.py). Only this profile
+# carries torch and chatterbox-tts.
+#
+# Weights are NEVER downloaded at build time (3.1 GB). Mount the models volume
+# and run scripts/download_chatterbox.py on demand. With the flag off, or with
+# no model mounted, the service starts normally and Chatterbox requests fall back
+# to Kokoro with a clear warning.
+FROM reactory-speech-service:speech-core
+
+USER root
+
+COPY requirements-expressive.txt ./
+RUN pip install --no-cache-dir -r requirements-expressive.txt \
+    && rm -rf /root/.cache/pip
+
+# Enable the engine for this profile only. Override with CHATTERBOX_ENABLED=false
+# to run the expressive image in the default configuration.
+ENV CHATTERBOX_ENABLED=true
+ENV CHATTERBOX_VARIANT=standard
+ENV CHATTERBOX_DEVICE=cpu
+ENV CHATTERBOX_MODEL_DIR=/app/models/chatterbox
+
+# Optional: the weights are supplied as a volume, never baked into the image.
+VOLUME ["/app/models/chatterbox"]
+
+EXPOSE 8765
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"]

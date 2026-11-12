@@ -169,7 +169,12 @@ class VoiceRecord:
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def descriptor(self, engine: str | None = None) -> VoiceDescriptor:
-        """Return the public descriptor shape for this record."""
+        """Return the public descriptor shape for this record.
+
+        ``license`` and ``attribution`` travel with every descriptor so a caller
+        can verify the permissive-licence requirement (ADR-0001) from
+        ``GET /api/tts/voices`` without a second lookup.
+        """
         return VoiceDescriptor(
             id=self.id,
             name=self.name,
@@ -179,6 +184,8 @@ class VoiceRecord:
             engine=engine or self.engine,
             quality=self.quality,
             tags=list(self.tags),
+            license=self.license,
+            attribution=self.attribution,
         )
 
     @property
@@ -420,19 +427,26 @@ def load_voice_registry(path: str | Path | None = None) -> VoiceRegistry:
 #: The process-wide registry.  Reading it is cheap; writing it is a later phase.
 VOICE_REGISTRY = load_voice_registry()
 
-#: Every voice id in the registry, in registry order.
-SHIPPED_VOICE_IDS: tuple[str, ...] = VOICE_REGISTRY.ids()
+#: Every voice id registered for **any** engine, in registry order.
+ALL_REGISTERED_VOICE_IDS: tuple[str, ...] = VOICE_REGISTRY.ids()
 
-#: Published quality grades, derived from the registry (never hand-maintained).
+#: Voice ids of the shipped Kokoro pack.  Phase 0-4 code and tests use this as
+#: "the pack"; optional engines (Chatterbox) live in the same registry file but
+#: are not pack voices, so they are excluded here deliberately.
+SHIPPED_VOICE_IDS: tuple[str, ...] = VOICE_REGISTRY.ids(engine=KOKORO_ENGINE)
+
+#: Published quality grades, derived from the Kokoro pack (never hand-maintained).
 QUALITY_GRADES: dict[str, str] = {
     record.id: record.quality
-    for record in VOICE_REGISTRY.voices.values()
+    for record in VOICE_REGISTRY.for_engine(KOKORO_ENGINE, enabled_only=False)
     if record.quality is not None
 }
 
-#: Voices the catalogue of record does not grade; their ``quality`` is ``None``.
+#: Kokoro voices the catalogue of record does not grade; ``quality`` is ``None``.
 UNGRADED_VOICE_IDS: tuple[str, ...] = tuple(
-    record.id for record in VOICE_REGISTRY.voices.values() if record.quality is None
+    record.id
+    for record in VOICE_REGISTRY.for_engine(KOKORO_ENGINE, enabled_only=False)
+    if record.quality is None
 )
 
 
@@ -480,6 +494,19 @@ def get_record(voice_id: str) -> VoiceRecord | None:
             exc_info=True,
         )
         return None
+
+
+def default_voice_for_engine(engine: str) -> str | None:
+    """First enabled registered voice for one engine, or ``None``.
+
+    Used when a request is routed to an engine other than the one that owns the
+    requested voice (a fallback).  The engine's own first record is the closest
+    stable substitute; the caller reports the substitution rather than hiding
+    it.
+    """
+    for record in VOICE_REGISTRY.for_engine(engine, enabled_only=True):
+        return record.id
+    return None
 
 
 def default_voice_id(available: Iterable[str] | None = None) -> str:
@@ -568,6 +595,8 @@ def build_catalogue(
                 engine=engine,
                 quality=None,
                 tags=["unknown"],
+                license="unknown",
+                attribution="",
             )
         catalogue.append(descriptor)
     return sorted(catalogue, key=lambda voice: (voice["language"], voice["id"]))
