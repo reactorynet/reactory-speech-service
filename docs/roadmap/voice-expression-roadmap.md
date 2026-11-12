@@ -148,10 +148,19 @@ blocks every other request. This phase makes it safe to run more than one engine
 Adds tone and acting. Kokoro can change pace but cannot change mood; this phase adds a second
 adapter that can, without changing the default deployment.
 
-**Engine choice.** Chatterbox (MIT) — Nano 110M for CPU/edge at roughly 3× realtime on 8 cores,
-Turbo 350M where more quality is wanted. Both support paralinguistic tags (`[laugh]`, `[chuckle]`)
-and zero-shot reference voices. Orpheus (Apache-2.0) is the higher-quality GPU option and is
-deferred to a GPU profile.
+At the measured throughput this is an **asynchronous / batch narration** capability, not an
+interactive one: a 2–3 s reply costs 15–25 s of a CPU core.
+
+**Engine choice.** Chatterbox (MIT) — `ChatterboxTTS` (2.13 GB t3) and `ChatterboxTurboTTS`
+(1.92 GB t3), both supporting paralinguistic tags (`[laugh]`, `[chuckle]`) and zero-shot reference
+voices. Orpheus (Apache-2.0) is the higher-quality GPU option and is deferred to a GPU profile.
+
+> **Measured, and it changes the plan.** The earlier claim of *"Nano 110M at roughly 3× realtime on
+> 8 cores"* came from upstream docs and does not survive measurement on our hardware: **RTF 0.13**,
+> i.e. ~7.7× *slower* than realtime, with no thread scaling because the bottleneck is sequential
+> token decoding. Thread count is therefore not the lever. There is also no `Nano` class in
+> chatterbox-tts 0.1.7, and the shared 1 GB S3Gen vocoder means no variant is a small download.
+> Details and numbers: [`../measurements/chatterbox-cpu.md`](../measurements/chatterbox-cpu.md).
 
 **Scope**
 
@@ -160,11 +169,22 @@ deferred to a GPU profile.
 - Map the internal `style` vocabulary onto available expressiveness controls and tags.
 - Report styles the engine cannot honour in `ignored`.
 - Feature-flag the engine, default off.
+- **Neutralise `model.watermarker`.** The engine applies a Perth watermark on every return path with
+  no off switch; ADR-0003 decision 4 requires clean production audio, so this is a mandatory adapter
+  step, not a flag.
+- Hold `exaggeration` to roughly **0.3–0.7**: it co-varies with pace (~30% faster at 1.0) and high
+  values degrade diction seriously enough that our own STT mis-hears brand names.
+- Declare a **compute-cost advisory** in `/capabilities`, because at RTF 0.13 the routing signal is
+  cost-per-second, not `native_rate`.
 
 **Acceptance criteria**
 
 - `style: "empathetic"` routes to Chatterbox and audibly differs from `style: "neutral"` on the
   same text and voice.
+- Production-mode output carries **no Perth watermark**; a dev-mode test asserts it is present when
+  not neutralised. (Asserted, not assumed — the engine applies it unconditionally.)
+- No `prosody.rate` is applied on top of `exaggeration` without a measured statement of the combined
+  effect, given the two controls interact.
 - The default image size and startup time are unchanged.
 - `/capabilities` reports the expressive engine only when its profile is deployed.
 - A missing model degrades to Kokoro with a clear `ignored` entry, not a 500.
