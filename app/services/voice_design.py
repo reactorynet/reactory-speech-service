@@ -524,9 +524,20 @@ class VoiceDesignService:
         duration = float(getattr(outcome, "duration", 0.0))
         audio = bytes(outcome.audio)
 
-        file_name = f"{voice_id}-{current_hash[:16]}.wav"
+        # ``voice_id`` reaches this method from a route parameter.  Slug it here
+        # rather than trusting the caller: it is about to become a filename, and
+        # a separator or a '..' segment would place the preview outside the
+        # preview directory.  Re-slugging is idempotent for ids we created.
+        safe_voice_id = _slug(voice_id)
+        if not safe_voice_id:
+            raise VoiceRecipeError(
+                "a preview needs a voice id containing at least one letter or digit"
+            )
+        file_name = f"{safe_voice_id}-{current_hash[:16]}.wav"
         preview_dir.mkdir(parents=True, exist_ok=True)
-        target = preview_dir / file_name
+        target = _safe_preview_path(preview_dir, file_name)
+        if target is None:  # pragma: no cover - file_name is generated, not supplied
+            raise VoiceRecipeError("could not derive a safe preview path")
         temporary = target.with_name(f".{target.name}.tmp")
         temporary.write_bytes(audio)
         os.replace(temporary, target)
