@@ -2,14 +2,17 @@
   "entries": {
     "Reactory": {
       "replacement": "Ree-actory",
-      "ipa": "ɹiˈæktɚɹi"
+      "ipa": "ɹiˈæktɚɹi",
+      "languages": ["en-US", "en-GB"]
     },
     "Werner": {
       "replacement": "Vahr-ner",
-      "ipa": "vˈɛərnər"
+      "ipa": "vˈɛərnər",
+      "languages": ["en-US", "en-GB"]
     },
     "API": {
-      "replacement": "Aeh-Pee Eye"
+      "replacement": "Aeh-Pee Eye",
+      "languages": ["en-US", "en-GB"]
     }
   }
 }

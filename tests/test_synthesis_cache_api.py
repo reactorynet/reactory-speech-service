@@ -276,7 +276,9 @@ def test_phonemize_endpoint_uses_the_inference_pool(tmp_path, monkeypatch):
             thread_names.append(threading.current_thread().name)
             return "həlˈoʊ wˈɜːld"
 
-        def normalize_text(self, text, custom_lexicon=None):
+        def normalize_text(self, text, custom_lexicon=None, language=None):
+            # ``language`` mirrors the real signature: the service resolves the
+            # engine locale (``zh`` -> ``cmn``) and passes it through.
             return text
 
     monkeypatch.setattr(

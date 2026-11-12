@@ -26,6 +26,12 @@ from typing import Protocol, runtime_checkable
 from app.services.stt_service import STTService
 
 
+# The script prompts live in the STT service so a direct /api/stt/transcribe call
+# and this harness produce the same characters (review finding F4). Re-exported
+# here because the harness's describe() documents them.
+from app.services.stt_service import SCRIPT_PROMPTS  # noqa: E402
+
+
 class TranscriberUnavailable(RuntimeError):
     """Round-trip scoring was requested but no local STT model is mounted."""
 
@@ -71,9 +77,15 @@ class NullTranscriber:
 class LocalTranscriber:
     """Round-trip scoring through the local faster-whisper service."""
 
-    def __init__(self, service: STTService, model: str | None = None) -> None:
+    def __init__(
+        self,
+        service: STTService,
+        model: str | None = None,
+        script_prompts: dict[str, str] | None = None,
+    ) -> None:
         self._service = service
         self.model = model or service.default_model
+        self._script_prompts = dict(SCRIPT_PROMPTS if script_prompts is None else script_prompts)
         # Any mounted model can transcribe; ``create`` validates the requested id.
         self.available = bool(service.available_models)
 
@@ -101,6 +113,11 @@ class LocalTranscriber:
             "available": self.available,
             "model": self.model,
             "description": "local faster-whisper (CTranslate2), local_files_only, vad disabled",
+            "script_prompts": sorted(self._script_prompts),
+            "script_prompt_note": (
+                "fixed language-generic prompt per script, applied to select Simplified "
+                "Chinese / Devanagari output; it adds no corpus content"
+            ),
         }
 
     def transcribe(self, wav_bytes: bytes, language: str | None = None) -> str | None:
@@ -115,6 +132,9 @@ class LocalTranscriber:
             vad=False,
             word_timestamps=False,
             temperature=0.0,
+            initial_prompt=self._script_prompts.get(
+                (language or "").strip().lower().split("-")[0]
+            ),
         )
         text = result.get("text")
         return text if isinstance(text, str) else None
@@ -135,6 +155,7 @@ def build_transcriber(*, enabled: bool = True, model: str | None = None) -> Tran
 __all__ = [
     "LocalTranscriber",
     "NullTranscriber",
+    "SCRIPT_PROMPTS",
     "Transcriber",
     "TranscriberUnavailable",
     "build_transcriber",

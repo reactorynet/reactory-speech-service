@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     whisper_stream_stability_margin_seconds: float = 0.35
     whisper_stream_max_buffer_seconds: float = 300.0
     whisper_language_confidence_threshold: float = 0.6
+    #: Apply the fixed per-language script prompt (Devanagari for ``hi``, Simplified
+    #: for ``zh``) when a request does not supply one. Off means Whisper picks the
+    #: script from acoustics alone, which returns Perso-Arabic for Hindi on the
+    #: pinned ``base`` model (SPEECH-010 review finding F4).
+    whisper_script_prompts_enabled: bool = True
 
     # TTS — Phase 3 (SPEECH-004): concurrency, lifecycle and caching.
     #

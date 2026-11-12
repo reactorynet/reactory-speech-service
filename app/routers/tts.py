@@ -48,7 +48,11 @@ from app.models.schemas import (
     VoicesResponse,
 )
 from app.services.designed_voices import VoiceConflictError, VoiceRecipeError
-from app.services.phonetic_converter import phonetic_converter
+from app.services.phonetic_converter import (
+    PhoneticConversionError,
+    UnsupportedLanguageError,
+    phonetic_converter,
+)
 from app.services.inference import InferenceExecutor
 from app.services.tts_service import ENGINE_ID, SAMPLE_RATE, SynthesisOutcome
 from app.services.voice_design import VoiceDesignService, default_direction
@@ -548,6 +552,11 @@ async def phonemize_text(request: Request, body: PhonemizeRequest) -> PhonemizeR
     Grapheme-to-phoneme conversion is CPU work over a process-global espeak-ng
     backend, so it is dispatched to the inference pool instead of running on the
     event loop.
+
+    The locale is the **voice's** engine locale when ``voice`` is supplied, and
+    otherwise the caller's language tag resolved through the voice registry, so
+    ``zh`` reaches the backend as ``cmn``. A language the backend cannot read is a
+    ``422`` — the alternative is a phoneme string that spells the text out.
     """
     tts_service = request.app.state.tts_service
     call = functools.partial(
@@ -555,6 +564,7 @@ async def phonemize_text(request: Request, body: PhonemizeRequest) -> PhonemizeR
         body.text,
         language=body.language or "en-us",
         custom_lexicon=body.custom_lexicon,
+        voice=body.voice,
     )
     try:
         executor = getattr(tts_service, "executor", None)
@@ -564,9 +574,13 @@ async def phonemize_text(request: Request, body: PhonemizeRequest) -> PhonemizeR
             # A service double (or an older deployment) has no inference pool.
             result = call()
         return PhonemizeResponse(**result)
-    except Exception as e:
+    except (UnsupportedLanguageError, PhoneticConversionError, ValueError) as e:
+        # Unsupported language, or text the phonemizer cannot convert: both are
+        # the caller's input, not a server fault.
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception:
         logger.exception("Phonemization failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Phonemization failed")
 @router.websocket("/stream")
 async def tts_stream(websocket: WebSocket) -> None:
     """WebSocket endpoint for streaming TTS.
@@ -705,6 +719,7 @@ async def get_lexicon_entry(word: str) -> LexiconEntryResponse:
         word=word,
         replacement=entry.get("replacement"),
         ipa=entry.get("ipa"),
+        languages=entry.get("languages"),
         source=entry.get("source", "custom"),
     )
 
@@ -725,6 +740,7 @@ async def create_or_update_lexicon_entry(body: LexiconEntryRequest) -> LexiconEn
         word=body.word,
         replacement=body.replacement,
         ipa=body.ipa,
+        languages=body.languages,
     )
     return LexiconEntryResponse(**res)
 

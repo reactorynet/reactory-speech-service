@@ -170,6 +170,7 @@ def build_report(
     config: dict[str, Any] | None = None,
     environment: dict[str, Any] | None = None,
     generated_at: str | None = None,
+    skipped: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """Assemble the report payload.
 
@@ -304,8 +305,10 @@ def build_report(
         "cells": rounded_cells,
         "routing": routing,
         "failures": failures,
+        "skipped": list(skipped),
         "status": {
             "cells": len(rounded_cells),
+            "cells_skipped": len(list(skipped)),
             "entries": sum(len(cell["entries"]) for cell in rounded_cells),
             "integrity_failures": len(integrity),
             "quality_failures": len(quality),
@@ -439,12 +442,25 @@ def render_table(report: dict[str, Any]) -> str:
 
     status = report.get("status") or {}
     lines.append("")
+    # ``passed`` here means "the audio is structurally sound". Quality failures
+    # are separate and are named explicitly: printing a bare ``passed=yes`` beside
+    # ``quality_failures=3`` reads as an endorsement of languages that did not
+    # round-trip, which is how SPEECH-010's Mandarin claim survived review.
+    quality_failures = status.get("quality_failures", 0)
+    verdict = "yes" if status.get("passed") else "NO"
+    if status.get("passed") and quality_failures:
+        verdict = f"yes (audio integrity only; {quality_failures} quality failures below)"
     lines.append(
         f"cells={status.get('cells', 0)} entries={status.get('entries', 0)} "
         f"integrity_failures={status.get('integrity_failures', 0)} "
-        f"quality_failures={status.get('quality_failures', 0)} "
-        f"passed={'yes' if status.get('passed') else 'NO'}"
+        f"quality_failures={quality_failures} "
+        f"passed={verdict}"
     )
+    if status.get("cells_skipped"):
+        lines.append(
+            f"cells_skipped={status['cells_skipped']} (languages the text front end "
+            "cannot phonemise; listed above)"
+        )
     transcriber = (report.get("meta") or {}).get("transcriber") or {}
     if not transcriber.get("enabled", False):
         lines.append("round-trip WER/CER not measured: local STT disabled (--no-stt)")

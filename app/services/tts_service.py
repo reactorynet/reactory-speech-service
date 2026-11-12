@@ -42,6 +42,7 @@ from app.engines.base import EngineUnavailableError, UnknownEngineError, lower_d
 from app.engines.kokoro import KokoroEngine
 from app.engines.manager import EngineManager
 from app.engines.router import EngineRouter
+from app.services.g2p_capability import g2p_capability
 from app.services.inference import InferenceExecutor
 from app.services.phonetic_converter import phonetic_converter
 from app.services.synthesis_cache import CacheEntry, SynthesisCache, build_cache_key
@@ -52,6 +53,7 @@ from app.services.voice_registry import (
     KOKORO_SPEED_MAX,
     KOKORO_SPEED_MIN,
     VoiceDescriptor,
+    engine_locale,
 )
 
 logger = logging.getLogger(__name__)
@@ -616,18 +618,42 @@ class TTSService:
         text: str,
         language: str = "en-us",
         custom_lexicon: dict[str, str] | None = None,
+        voice: str | None = None,
     ) -> dict:
-        """Convert text to phonetic writing and report normalized version."""
-        normalized = phonetic_converter.normalize_text(text, custom_lexicon=custom_lexicon)
+        """Convert text to phonetic writing and report the normalised version.
+
+        The engine locale comes from the **voice** when one is supplied, otherwise
+        from the language tag resolved through the registry: ``zh`` becomes ``cmn``,
+        the code the Chinese voices actually carry. A language the phonemizer cannot
+        handle raises :class:`UnsupportedLanguageError`, which the router returns as
+        a 422 rather than a phoneme string full of espeak's spelling fallback.
+        """
+        locale = engine_locale(language)
+        if voice:
+            _voice_key, locale = self._kokoro_engine.resolve_voice(voice)
+        g2p_capability.ensure_supported(locale)
+        normalized = phonetic_converter.normalize_text(
+            text, custom_lexicon=custom_lexicon, language=locale
+        )
         phonemes = phonetic_converter.convert_to_phonetic(
-            text, language=language, custom_lexicon=custom_lexicon
+            text, language=locale, custom_lexicon=custom_lexicon
         )
         return {
             "text": text,
             "normalized": normalized,
             "phonemes": phonemes,
-            "language": language,
+            "language": locale,
         }
+
+    def g2p_capabilities(self) -> dict:
+        """Measured text-front-end support, for ``/health``.
+
+        Non-blocking on purpose: the probe loads one espeak-ng dictionary per
+        language (about 1.5 s each), and a health check must not wait for that.
+        Languages not yet probed are reported as ``pending`` rather than assumed
+        supported.
+        """
+        return g2p_capability.snapshot()
 
     @staticmethod
     def _samples_to_wav(samples: np.ndarray, sample_rate: int) -> bytes:

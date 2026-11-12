@@ -50,6 +50,107 @@ Some languages have very little training data (French is a single voice; Mandari
 are graded C). Pronunciation quality for those languages may be limited by grapheme-to-phoneme
 coverage rather than by the model. Verify with native speakers before promising a locale.
 
+## Text front end (G2P) support — measured, not assumed
+
+The voice pack is an **acoustic** asset. It says which languages the model can render; it says
+nothing about whether the text front end can phonemise them, and on this deployment the two
+disagree. Until SPEECH-010 the service advertised every catalogue language, so a request for a
+language espeak-ng could not read produced a valid WAV of nonsense (the Japanese case: 773 KB /
+16.11 s for a 21-character sentence, made of the words "english japanese letter").
+
+`GET /api/tts/capabilities` now reports **what the phonemiser was measured able to produce**, and a
+request for a language it cannot handle returns **422** instead of audio. The matrix below is not
+hand-written: it is `app/eval/data/language-quality.json`, produced by
+`scripts/record_language_quality.py` from **every entry in the committed golden corpus** for every
+shipped voice, through the local faster-whisper model. `tests/test_multilingual_roundtrip.py`
+re-measures the corpus and fails if the file and the measurement disagree, so a number here cannot
+drift from reality or be replaced by a sentence that happens to pass.
+
+| Language | Voices | Engine locale | Advertised | Evidence (committed corpus) |
+|---|---|---|---|---|
+| American English | `af_*`, `am_*` | `en-us` | yes — production | 22 sentences, worst WER 0.2632 / CER 0.2105 |
+| British English | `bf_*`, `bm_*` | `en-gb` | yes — production | 22 sentences, worst WER 0.2632 / CER 0.2105 |
+| Spanish | `ef_*`, `em_*` | `es` | yes — production | 2 sentences, worst WER 0.1053 / CER 0.0303 |
+| Brazilian Portuguese | `pf_*`, `pm_*` | `pt-br` | yes — **small sample** | 1 sentence (WER 0.2857 / CER 0.0312); passes, but one sentence is a smoke test |
+| French | `ff_siwis` | `fr-fr` | yes, **usable with caveats** | `fr-greeting-short` exceeded target; worst WER 0.6667 / CER 0.2444 |
+| Italian | `if_*`, `im_*` | `it` | yes — **small sample** | 1 sentence (WER 0.0 / CER 0.0); passes, but one sentence is a smoke test |
+| Hindi | `hf_*`, `hm_*` | `hi` | yes — **small sample** | 1 sentence (WER 0.3333 / CER 0.0435, Devanagari); a smoke test, not coverage |
+| Mandarin Chinese | `zf_*`, `zm_*` | `cmn` | yes, **usable with caveats** | `zh-narration-long` exceeded target; worst WER 0.9231 / CER 0.9231 |
+| Japanese | `jf_*`, `jm_*` | `ja` | **no** | espeak-ng spells the script out (8 language switches for the probe sentence, e.g. ['en', 'ja', 'en', 'ja']) |
+
+**Sample size is part of the evidence.** The corpus has 22 English sentences but only one or two
+for Portuguese, Italian, Hindi and Spanish: those languages pass, and their row says so, but one
+sentence is a smoke test rather than a quality claim. `GET /api/tts/capabilities` attaches the same
+caveat, so a client does not have to read this document to learn that. Only English has anything
+approaching coverage, which is why the grade table above — not these pass/fail bands — is what to
+use when picking a customer-facing voice.
+
+**What "usable with caveats" means.** Two advertised languages do not round-trip
+cleanly on the committed corpus, and saying so is the point of this table:
+
+* **Mandarin Chinese** — short and technical sentences round-trip (greeting CER 0.50 with
+  `zf_xiaoxiao`, 0.36 with `zm_yunjian`; the domain-vocabulary sentence 0.28 / 0.38), but the
+  narration sentence measures **CER 0.92 / 0.72**. Espeak's Mandarin phonemisation is good enough
+  for short utterances and degrades with length; that is a text-front-end limitation, not the
+  acoustic model, and it is why Mandarin is not listed as production-ready. Treat long Chinese
+  narration as unsupported in practice.
+* **French** — `ff_siwis` round-trips narration (0.04) and numbers (0.25), but the greeting scores
+  WER 0.67 because the local `base` Whisper model mishears the proper name ("Werner" → "Wayne").
+  That is a recogniser limitation on a name, not a synthesis defect, and it is recorded rather than
+  averaged away.
+
+Both appear in `GET /api/tts/capabilities` as a measured caveat with the failing entry named, so a
+caller can decide before rendering.
+
+**Japanese is unsupported on this build.** The voices are still present and still listed by
+`GET /api/tts/voices` — the acoustic model renders them — but espeak-ng has no usable Japanese
+dictionary, so it names each character ("japanese letter", "chinese letter") instead of reading
+it. Advertising a language is therefore tied to evidence, not to the pack.
+
+**Two guards stop a script a voice cannot read**, because the marker guard alone was not enough:
+espeak emits language-switch markers when it *knows* it is changing language, but when a Japanese
+sentence is sent to an English voice it simply transliterates each character with no markers at
+all (measured: `dʒˈæpəniːzlˌɛɾɚ` twenty-one times, 20.9 s of audio, HTTP 200).
+
+1. **Before phonemisation — script vs locale.** If the text contains a script the voice's locale
+   does not use (kana/Han for `en-*`, `es`, `it`, `fr`, `pt`…), the request is refused immediately
+   with `UnsupportedLanguageError` → **422**, with no render. Latin is accepted by every shipped
+   language, which is why `Reactory` works as a loanword in Spanish, Italian, Portuguese and Hindi.
+   Inline `[word|/ipa/]` spans are exempt: they need no G2P.
+
+   Two deliberate allowances keep this from refusing text the phonemizer reads correctly:
+
+   * **Greek letters and mathematical symbols are readable alongside Latin.**
+     `The value of π is 3.14` → `ðə vˈæljuː ʌv pˈaɪ ɪz θɹˈiː.fˈɔːɹtiːn`, and `Use Δ for
+     difference` → `jˈuːs dˈɛltə fɔːɹ dˈɪfɹəns`. Developer copy containing π, Δ, Ω, ∑ or √ is
+     normal input and used to synthesise; refusing it was a regression, not a fix.
+   * **A single foreign character is tolerated** and falls through to the output check, because
+     one letter is read as a letter name (`Option Д` → `ˈɑːpʃən dˈɛː`) while a foreign *word* is
+     spelt out (`Привет` → `pˈɛː ˈɛɹ ˈɪː vˈɛː jˈɛː tˈɛː`, refused).
+
+   **The remaining risk is mixed-script text:** a Chinese or Japanese *word* inside an English
+   sentence still shortens the utterance to a 422 rather than being transliterated. That is
+   deliberate — the alternative is the "chinese letter" garbage this ticket is about — and the
+   workaround is to split the utterance or supply an explicit `[word|/ipa/]` span.
+2. **After phonemisation — the spelling signature.** A phoneme string that emits about one token
+   per source character, and whose tokens are nearly all one value cycling, is espeak reading the
+   text out letter by letter. Measured separation: legitimate sentences 0.69–1.00 distinct-token
+   ratio at ≤0.76 tokens/char; spelling fallback 0.05–0.10 distinct at 1.00 tokens/char. Language
+   switches are also counted, relative to input length, so a legitimate loanword is not refused.
+
+Both guards run on the converter path *and* on the engine's fused (self-phonemising) path, so the
+streaming and `phonetic_preprocess=false` routes cannot reach the vocoder with garbage either.
+
+Two related rules the same change pins down:
+
+- **The voice's locale is authoritative.** A caller language tag is resolved through the voice
+  registry (`zh` → `cmn`, `pt` → `pt-br`), never passed to espeak-ng verbatim. The registry is the
+  only mapping table; there is no second copy to drift.
+- **The built-in lexicon is English.** `Ree-actory`, `jay-son`, `kilometers` and the abbreviation
+  expansions apply to English voices only. Applying an English respelling to French spliced an
+  English diphthong into the sentence (`(en)ɹˈiːˈaktəɹi(fr)`). Other languages use their own G2P or
+  an explicit lexicon entry, whose `ipa` field is exact.
+
 ## Using a voice
 
 ```bash

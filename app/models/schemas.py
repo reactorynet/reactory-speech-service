@@ -49,7 +49,20 @@ class TTSRequest(BaseModel):
 
 class PhonemizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000, description="Text to phonemize")
-    language: str | None = Field(default="en-us", description="Language code ('en-us' or 'en-gb')")
+    language: str | None = Field(
+        default="en-us",
+        description=(
+            "Language tag or engine locale ('zh', 'zh-CN', 'cmn', 'en-gb'). Resolved "
+            "through the voice registry, so 'zh' reaches the phonemizer as 'cmn'."
+        ),
+    )
+    voice: str | None = Field(
+        default=None,
+        description=(
+            "Optional voice id. When supplied, the voice's own engine locale is used "
+            "instead of ``language``, so phonemization matches synthesis exactly."
+        ),
+    )
     custom_lexicon: dict[str, str] | None = Field(default=None, description="Optional pronunciation overrides for phonemization")
 
 
@@ -57,19 +70,30 @@ class PhonemizeResponse(BaseModel):
     text: str = Field(..., description="Original input text")
     normalized: str = Field(..., description="Normalized text after expansions")
     phonemes: str = Field(..., description="Phonetic (IPA) representation")
-    language: str = Field(default="en-us", description="Language code used")
+    language: str = Field(
+        default="en-us",
+        description="Engine locale actually used to phonemize (e.g. 'cmn' for Chinese)",
+    )
 
 
 class LexiconEntryRequest(BaseModel):
     word: str = Field(..., min_length=1, max_length=200, description="Word or phrase to match")
     replacement: str | None = Field(default=None, description="Phonetic respelling (e.g. 'koo-ber-net-eez')")
     ipa: str | None = Field(default=None, description="Direct International Phonetic Alphabet (IPA) representation")
+    languages: list[str] | None = Field(
+        default=None,
+        description=(
+            "Language tags this entry applies to (e.g. ['fr-FR']). Omit for an "
+            "English entry: an unscoped respelling is not applied to other languages."
+        ),
+    )
 
 
 class LexiconEntryResponse(BaseModel):
     word: str
     replacement: str | None = None
     ipa: str | None = None
+    languages: list[str] | None = None
     source: str = "custom"
 
 
@@ -291,7 +315,38 @@ class EngineCapabilities(BaseModel):
     name: str
     available: bool = False
     license: str | None = None
-    languages: list[str] = Field(default_factory=list)
+    languages: list[str] = Field(
+        default_factory=list,
+        description="Languages the pipeline can actually phonemise on this deployment",
+    )
+    unsupported_languages: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Languages the voice pack can render acoustically but the text front end "
+            "cannot phonemise; requests for them return 422 rather than garbage"
+        ),
+    )
+    languages_with_caveats: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Languages that phonemise but whose measured round-trip quality is not "
+            "clean (quality='caveats'), with the caveat and the measured CER/WER"
+        ),
+    )
+    language_support: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Measured G2P support and quality per language "
+            "(language, locale, supported, quality, caveat, reason, measured)"
+        ),
+    )
+    languages_pending: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Languages whose text front end has not been probed yet in this process. "
+            "They are neither advertised nor refused until measured."
+        ),
+    )
     voice_count: int = 0
     default_voice: str | None = None
     native_rate: bool = False
@@ -357,6 +412,13 @@ class HealthResponse(BaseModel):
     )
     cache: dict[str, Any] | None = Field(
         default=None, description="Synthesis cache configuration and counters"
+    )
+    g2p: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Measured text-front-end (G2P) support: supported languages and the reason "
+            "each unsupported language cannot be phonemised"
+        ),
     )
 
 

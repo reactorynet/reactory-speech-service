@@ -304,6 +304,10 @@ class EvaluationRunner:
         self.embedder = embedder or speaker_module.SpectralEmbedder()
         self.config = config or RunnerConfig()
         self.voices_spec = voices_spec
+        #: Cells not measured because the engine's text front end cannot phonemise
+        #: the language. Recorded, never silently dropped: an unmeasured language
+        #: must not look like a passing one.
+        self.skipped: list[dict[str, Any]] = []
 
     # -- rendering ---------------------------------------------------------
 
@@ -635,9 +639,27 @@ class EvaluationRunner:
         """
         languages = self._selected_languages()
         cells: list[Cell] = []
+        self.skipped = []
         for engine in self.engines:
+            support = getattr(engine, "g2p_support", None)
             for voice_descriptor in select_voices(engine, languages, self.voices_spec):
                 language = voice_language(voice_descriptor)
+                if callable(support):
+                    ok, reason = support(language)
+                    if not ok:
+                        # Measuring a language the pipeline cannot phonemise
+                        # produces fluent nonsense and a misleading WER. Record
+                        # the skip with the engine's own reason instead.
+                        self.skipped.append(
+                            {
+                                "engine": str(getattr(engine, "id", "unknown")),
+                                "voice": str(voice_descriptor.get("id")),
+                                "language": language,
+                                "status": "unsupported_language",
+                                "reason": reason,
+                            }
+                        )
+                        continue
                 entries = (
                     list(self.corpus)
                     if self.config.cross_language
