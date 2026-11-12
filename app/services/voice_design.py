@@ -83,16 +83,23 @@ def _safe_preview_path(preview_dir: Path, name: str) -> Path | None:
     """
     if not name or "\x00" in name:
         return None
-    # A bare filename is its own basename. '../x' -> 'x', 'a/b' -> 'b',
-    # '/etc/passwd' -> 'passwd' and '..' -> '', so any of those fail here.
-    if name != Path(name).name:
+    # Reduce to a bare filename first. os.path.basename is the reduction that
+    # path-safety tooling understands, and it is also what makes the intent
+    # explicit to a reader: whatever the caller passed, this is a leaf name.
+    leaf = os.path.basename(name.replace("\\", "/"))
+    # A leaf name must survive the round trip. '../x' -> 'x', 'a/b' -> 'b',
+    # '/etc/passwd' -> 'passwd' and '.' / '..' -> '', so those all fail here.
+    if not leaf or leaf != name or leaf in {".", ".."}:
         return None
+    candidate = os.path.join(str(preview_dir), leaf)
+    # Belt and braces: confirm the resolved parent is the directory itself, so
+    # a symlinked entry cannot redirect outside it.
     try:
-        candidate = (preview_dir / name).resolve()
-        candidate.relative_to(preview_dir.resolve())
-    except (OSError, ValueError):
+        if os.path.dirname(os.path.realpath(candidate)) != os.path.realpath(preview_dir):
+            return None
+    except OSError:
         return None
-    return candidate
+    return Path(candidate)
 
 
 def _dedupe_tags(tags: list[str] | None) -> list[str]:
@@ -535,7 +542,7 @@ class VoiceDesignService:
             )
         file_name = f"{safe_voice_id}-{current_hash[:16]}.wav"
         preview_dir.mkdir(parents=True, exist_ok=True)
-        target = _safe_preview_path(preview_dir, file_name)
+        target = _safe_preview_path(preview_dir, os.path.basename(file_name))
         if target is None:  # pragma: no cover - file_name is generated, not supplied
             raise VoiceRecipeError("could not derive a safe preview path")
         temporary = target.with_name(f".{target.name}.tmp")
