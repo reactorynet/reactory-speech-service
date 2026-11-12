@@ -33,7 +33,6 @@ from typing import Any
 from app.eval.corpus import load_corpus
 from app.eval.runner import EvaluationRunner, RunnerConfig
 from app.eval.stt import LocalTranscriber
-from app.services.g2p_capability import g2p_capability
 from app.services.stt_service import STTService
 from app.services.tts_service import TTSService
 

@@ -112,19 +112,50 @@ PROBE_SENTENCES: dict[str, str] = {
     "ja": "リアクトリーの音声サービスはとても便利です。",
 }
 
-#: Cache for the quality record, keyed by the file's mtime so an edited record is
-#: picked up without a restart (the same pattern the lexicon loader uses).
-_quality_lock = threading.RLock()
-_quality_cache: dict[str, Any] = {}
-_quality_mtime: float | None = None
+class _QualityRecordCache:
+    """The committed quality record, cached by the file's mtime.
+
+    A cache is a value plus the condition under which that value is still
+    valid; keeping the two together means invalidation cannot be done
+    half-way. That is also why this is an object rather than two module
+    globals behind a lock: the read and the write are one concern, and
+    :func:`load_quality_record` below never has to reason about them
+    separately.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._languages: dict[str, Any] = {}
+        self._mtime: float | None = None
+
+    def get(self, mtime: float) -> dict[str, Any] | None:
+        """The cached record if it was read at ``mtime``, otherwise ``None``.
+
+        ``None`` is the miss signal rather than an empty mapping, because a
+        valid record may legitimately be an empty mapping.
+        """
+        with self._lock:
+            if self._mtime is not None and mtime == self._mtime:
+                return self._languages
+            return None
+
+    def put(self, mtime: float, languages: dict[str, Any]) -> None:
+        with self._lock:
+            self._languages = languages
+            self._mtime = mtime
+
+    def clear(self) -> None:
+        with self._lock:
+            self._languages = {}
+            self._mtime = None
+
+
+_QUALITY_RECORD_CACHE = _QualityRecordCache()
 
 
 def reset_quality_cache() -> None:
     """Forget the cached quality record (tests, or after regenerating it)."""
-    global _quality_mtime, _quality_cache
-    with _quality_lock:
-        _quality_cache = {}
-        _quality_mtime = None
+    _QUALITY_RECORD_CACHE.clear()
 
 
 def load_quality_record(path: Path | None = None) -> dict[str, Any]:
@@ -134,17 +165,15 @@ def load_quality_record(path: Path | None = None) -> dict[str, Any]:
     must make a language ``unverified``, never silently ``production``. A read
     failure is logged, not raised, because this runs inside a capabilities call.
     """
-    global _quality_cache, _quality_mtime
-
     record_path = path or QUALITY_RECORD_PATH
     try:
         mtime = record_path.stat().st_mtime
     except OSError:
         return {}
 
-    with _quality_lock:
-        if mtime == _quality_mtime:
-            return _quality_cache
+    cached = _QUALITY_RECORD_CACHE.get(mtime)
+    if cached is not None:
+        return cached
 
     try:
         payload = json.loads(record_path.read_text(encoding="utf-8"))
@@ -155,9 +184,7 @@ def load_quality_record(path: Path | None = None) -> dict[str, Any]:
         logger.warning("Could not read the language quality record %s: %s", record_path, exc)
         return {}
 
-    with _quality_lock:
-        _quality_cache = languages
-        _quality_mtime = mtime
+    _QUALITY_RECORD_CACHE.put(mtime, languages)
     return languages
 
 
