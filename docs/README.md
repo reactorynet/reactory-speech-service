@@ -31,6 +31,7 @@ speech service. It is the reference for every ticket raised against this reposit
 | [`architecture/speech-platform.md`](architecture/speech-platform.md) | Target architecture, contracts and capability matrix |
 | [`architecture/evaluation-harness.md`](architecture/evaluation-harness.md) | Offline evaluation harness, golden corpus, baseline and routing policy |
 | [`roadmap/voice-expression-roadmap.md`](roadmap/voice-expression-roadmap.md) | Phased plan and per-ticket scope |
+| [`measurements/chatterbox-cpu.md`](measurements/chatterbox-cpu.md) | Measured CPU throughput for the expressive engine — corrects the roadmap's original claim |
 | [`voices/kokoro-voice-catalogue.md`](voices/kokoro-voice-catalogue.md) | The 54 shipped voices and how to design new ones |
 | [`voices/designed-voices.md`](voices/designed-voices.md) | Blending rules, the four shipped presets, previews and persistence |
 
