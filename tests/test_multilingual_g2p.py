@@ -341,7 +341,9 @@ CHINESE_SENTENCE = "你好，今天我能帮你做什么？"
 class _RecordingModel:
     """A Kokoro double that fails loudly if a render is attempted."""
 
-    def __init__(self, voice_ids: tuple[str, ...] = ("af_heart", "jf_alpha")) -> None:
+    def __init__(
+        self, voice_ids: tuple[str, ...] = ("af_heart", "bm_george", "jf_alpha")
+    ) -> None:
         self.voices = {voice_id: object() for voice_id in voice_ids}
         self.calls: list[dict] = []
 
@@ -365,7 +367,10 @@ def _engine_with_recording_model() -> tuple[KokoroEngine, _RecordingModel]:
         ("japanese text, default voice", JAPANESE_SENTENCE, None),
         ("mixed english + japanese", f"Hello Reactory, {JAPANESE_SENTENCE}", "af_heart"),
         ("chinese text on an English voice", CHINESE_SENTENCE, "af_heart"),
-        ("japanese text on a Japanese-less pack voice", JAPANESE_SENTENCE, "af_heart"),
+        # A second English family for the same case: British English must refuse
+        # Japanese text too, and it proves the guard is locale-driven rather than
+        # hard-coded to the American locale.
+        ("japanese text on a British English voice", JAPANESE_SENTENCE, "bm_george"),
     ],
 )
 def test_wrong_script_for_the_voice_is_refused_before_any_render(label, text, voice):

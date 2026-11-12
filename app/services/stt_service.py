@@ -30,6 +30,28 @@ from app.services.vad import TrimResult, VoiceActivityDetector
 
 logger = logging.getLogger(__name__)
 
+#: Languages whose base-tier Whisper output picks the wrong *script*.
+#:
+#: Spelling is not content: Whisper's decoder chooses between Devanagari and
+#: Perso-Arabic for Hindi, and between Simplified and Traditional for Chinese,
+#: from acoustic evidence alone. On the pinned ``base`` model it picks Perso-Arabic
+#: for Hindi and Traditional for Chinese, so a correct render scores as a total
+#: miss against a Devanagari/Simplified reference purely because the characters
+#: differ. Each prompt is a fixed, language-generic sentence that names the script
+#: and carries no content from any corpus; it steers character set only. Measured
+#: on ``base``: Hindi `نمستی ورنر...` -> `नमस्टी वारनर...`, Chinese `你要為Ena...`
+#: -> `你要为Ena...`. Same audio, same model, same beam width.
+#:
+#: Review finding F4: this lived only in the evaluation harness, so
+#: ``/api/stt/transcribe`` still returned Perso-Arabic for Hindi while the harness
+#: reported Devanagari. It now lives here, is applied by :meth:`STTService.transcribe`
+#: (config-gated by ``whisper_script_prompts_enabled``) and the harness simply
+#: relies on it, so the API and the acceptance measurement agree.
+SCRIPT_PROMPTS: dict[str, str] = {
+    "hi": "यह एक हिन्दी में लिखा हुआ वाक्य है।",
+    "zh": "这是一个用简体中文写的句子。",
+}
+
 #: Prefix for temporary audio files so any leak is attributable in the temp dir.
 TEMP_AUDIO_PREFIX = "reactory-stt-"
 
@@ -369,6 +391,14 @@ class STTService:
             portion. ``vad_failed`` marks a detector that could not run, in which
             case the original audio was transcribed.
         """
+        if initial_prompt is None and settings.whisper_script_prompts_enabled:
+            # A script prompt selects the character set, not the content. The
+            # caller can always override it (the evaluation harness does not need
+            # to) and an operator can disable it wholesale.
+            initial_prompt = SCRIPT_PROMPTS.get(
+                (language or "").strip().lower().split("-")[0]
+            )
+
         with self._transcription(
             audio_bytes, language, model, word_timestamps, vad, temperature, initial_prompt
         ) as run:

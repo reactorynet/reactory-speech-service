@@ -1,35 +1,58 @@
-"""Runtime capability probe for the grapheme-to-phoneme (G2P) backend.
+"""Runtime capability and quality signal for the speech text front end.
+
+Two different questions, two different answers
+----------------------------------------------
 
 The voice registry says which languages the *acoustic model* can speak. It cannot
-say which languages the *text front end* can phonemise: that depends on the
-espeak-ng build in this image and on the script of the text. On this repository
-the two disagree — the Kokoro pack ships five Japanese voices, but espeak-ng
-cannot read Japanese kanji and spells it out as "chinese letter" instead.
+say which languages the *text front end* can phonemise, and it says nothing about
+how well a language round-trips. On this repository both gaps are real:
 
-Advertising a language the pipeline cannot phonemise is how SPEECH-010 happened:
-the catalogue said Japanese worked, the phonemizer produced 16 seconds of
-"english japanese letter" for a 21-character sentence, and every layer reported
-success because the WAV was valid.
+* the Kokoro pack ships five Japanese voices, but espeak-ng cannot read Japanese
+  kanji and spells it out as "japanese letter" instead;
+* Mandarin phonemises correctly and still scores CER 0.92 on a normal-length
+  narration sentence with the local Whisper model.
 
-This module closes that gap by **measuring** the backend instead of trusting the
-catalogue:
+Advertising either of those as a clean "yes" is how SPEECH-010 happened, and it is
+why this module reports **two** measured facts per language rather than a boolean:
 
-* one representative sentence per language, phonemised through the real converter;
-* a language is supported only when that produces phonemes with no spelling
-  fallback (espeak emits a language-switch marker pair per character when it has
-  to spell a script out);
-* the result is cached for the process and reported by ``GET /api/tts/capabilities``
-  and ``/health``, and it gates synthesis and ``/api/tts/phonemize``.
+``supported``
+    Whether the backend produces usable phonemes for a representative sentence of
+    the language (no language-switch spelling fallback, no script it cannot read).
 
-The probe is deliberately cheap (milliseconds, once per process) and has no model
-dependency: it exercises exactly the component that was broken.
+``quality``
+    ``production`` when every entry the language has in the committed golden corpus
+    round-tripped within its target, ``caveats`` when at least one did not (with
+    the failing entries named), ``unsupported`` when the first check failed.
+
+The numbers behind ``quality`` are *not* maintained here. They are measured by
+``scripts/record_language_quality.py`` against ``app/eval/data/golden_corpus.json``
+and committed to ``app/eval/data/language-quality.json``; this module only reads
+that record. A language with no record is reported ``unverified`` rather than
+assumed good, so a missing measurement cannot become an advertisement.
+
+Cost, measured
+--------------
+
+The support probe loads one espeak-ng dictionary per language: **about 13.5 s for
+all nine on this image, once per process** (measured: first
+``g2p_capability.report()`` 13.45 s, second 0.000 s). That is far too much to pay
+on a request path, so:
+
+* ``report()`` is the blocking measurement — startup and tests use it;
+* ``report(block=False)`` and :meth:`G2PCapability.snapshot` never probe; they
+  return what has been measured so far and name the rest as ``pending``;
+* ``GET /api/tts/capabilities`` and ``/health`` read the non-blocking view, so no
+  request ever pays a dictionary load (review finding F3).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from app.services.phonetic_converter import (
     PhoneticConversionError,
@@ -40,7 +63,6 @@ from app.services.phonetic_converter import (
     marks_spelling_output,
     strip_language_markers,
 )
-
 from app.services.voice_registry import (
     LANGUAGE_FAMILIES,
     canonical_language,
@@ -48,6 +70,26 @@ from app.services.voice_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Committed measurement of round-trip quality per language. Written by
+#: ``scripts/record_language_quality.py``; read-only here.
+QUALITY_RECORD_PATH = (
+    Path(__file__).resolve().parent.parent / "eval" / "data" / "language-quality.json"
+)
+
+#: Quality bands. There is deliberately no "close enough" band: the ticket's point
+#: is that a measured number either met its corpus target or it did not.
+QUALITY_PRODUCTION = "production"
+
+#: Below this many measured sentences, a passing language is reported with an
+#: explicit "small sample" caveat. Portuguese, Italian and Hindi have a single
+#: corpus sentence each: they passed, which is real evidence, but presenting one
+#: sentence as production coverage would repeat the mistake this module exists to
+#: prevent in a subtler form.
+THIN_EVIDENCE_SENTENCES = 3
+QUALITY_CAVEATS = "caveats"
+QUALITY_UNSUPPORTED = "unsupported"
+QUALITY_UNVERIFIED = "unverified"
 
 #: Representative sentence per canonical language tag.
 #:
@@ -70,10 +112,68 @@ PROBE_SENTENCES: dict[str, str] = {
     "ja": "リアクトリーの音声サービスはとても便利です。",
 }
 
+#: Cache for the quality record, keyed by the file's mtime so an edited record is
+#: picked up without a restart (the same pattern the lexicon loader uses).
+_quality_lock = threading.RLock()
+_quality_cache: dict[str, Any] = {}
+_quality_mtime: float | None = None
+
+
+def reset_quality_cache() -> None:
+    """Forget the cached quality record (tests, or after regenerating it)."""
+    global _quality_mtime, _quality_cache
+    with _quality_lock:
+        _quality_cache = {}
+        _quality_mtime = None
+
+
+def load_quality_record(path: Path | None = None) -> dict[str, Any]:
+    """Read the committed per-language quality record.
+
+    Returns ``{}`` when the file is missing or malformed: an absent measurement
+    must make a language ``unverified``, never silently ``production``. A read
+    failure is logged, not raised, because this runs inside a capabilities call.
+    """
+    global _quality_cache, _quality_mtime
+
+    record_path = path or QUALITY_RECORD_PATH
+    try:
+        mtime = record_path.stat().st_mtime
+    except OSError:
+        return {}
+
+    with _quality_lock:
+        if mtime == _quality_mtime:
+            return _quality_cache
+
+    try:
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        languages = payload.get("languages")
+        if not isinstance(languages, dict):
+            raise ValueError("'languages' must be an object")
+    except Exception as exc:  # noqa: BLE001 - a bad record must not break capabilities
+        logger.warning("Could not read the language quality record %s: %s", record_path, exc)
+        return {}
+
+    with _quality_lock:
+        _quality_cache = languages
+        _quality_mtime = mtime
+    return languages
+
+
+def _quality_for(language: str) -> dict[str, Any]:
+    """Quality row for a canonical language tag (``en-US`` -> ``en``)."""
+    record = load_quality_record()
+    if not record:
+        return {}
+    base = (language or "").strip().lower().split("-")[0]
+    row = record.get(base)
+    return row if isinstance(row, dict) else {}
+
 
 @dataclass(frozen=True)
 class LanguageSupport:
-    """Measured G2P support for one language."""
+    """Measured G2P support *and* round-trip quality for one language."""
 
     language: str
     """Canonical language tag (e.g. ``zh``)."""
@@ -90,22 +190,101 @@ class LanguageSupport:
     marker_pairs: int = 0
     """Language-switch marker pairs espeak emitted for the probe sentence."""
 
+    quality: str = QUALITY_UNVERIFIED
+    """``production`` / ``caveats`` / ``unsupported`` / ``unverified``."""
+
+    caveat: str | None = None
+    """One-line human summary of the measured limitation, when there is one."""
+
+    measured: dict[str, Any] = field(default_factory=dict)
+    """The measured figures behind :attr:`quality` (worst WER/CER, failing entries)."""
+
     def as_dict(self) -> dict:
         return {
             "language": self.language,
             "locale": self.locale,
             "supported": self.supported,
+            "quality": self.quality,
+            "caveat": self.caveat,
             "reason": self.reason,
             "marker_pairs": self.marker_pairs,
+            "measured": self.measured,
         }
 
 
+def _with_quality(row: LanguageSupport) -> LanguageSupport:
+    """Attach the committed quality measurement to a support verdict."""
+    if not row.supported:
+        return LanguageSupport(
+            language=row.language,
+            locale=row.locale,
+            supported=False,
+            reason=row.reason,
+            marker_pairs=row.marker_pairs,
+            quality=QUALITY_UNSUPPORTED,
+        )
+
+    record = _quality_for(row.language)
+    if not record:
+        return LanguageSupport(
+            language=row.language,
+            locale=row.locale,
+            supported=True,
+            reason=row.reason,
+            marker_pairs=row.marker_pairs,
+            quality=QUALITY_UNVERIFIED,
+            caveat=(
+                "round-trip quality has not been measured for this language; it is "
+                "phonemisable but not verified as usable"
+            ),
+        )
+
+    quality = str(record.get("quality") or QUALITY_UNVERIFIED)
+    failing = list(record.get("entries_over_target") or [])
+    measured = {
+        "worst_wer": record.get("worst_wer"),
+        "worst_cer": record.get("worst_cer"),
+        "worst_entry": record.get("worst_entry"),
+        "entries_measured": record.get("entries_measured"),
+        "entries_over_target": failing,
+    }
+    measured_count = record.get("entries_measured") or 0
+    caveat = None
+    if quality == QUALITY_CAVEATS:
+        caveat = (
+            f"usable with caveats: {len(failing)} of "
+            f"{measured_count} measured sentences exceeded target "
+            f"({', '.join(failing)}); worst CER {record.get('worst_cer')}"
+        )
+    elif measured_count < THIN_EVIDENCE_SENTENCES:
+        # "production" here means every *measured* sentence passed. With one or
+        # two sentences that is a smoke test, not coverage, and saying so is the
+        # difference between evidence and a non-empty WAV.
+        caveat = (
+            f"verified on {measured_count} corpus sentence"
+            f"{'' if measured_count == 1 else 's'} only; a small sample, not a "
+            "statement of broad quality"
+        )
+    return LanguageSupport(
+        language=row.language,
+        locale=row.locale,
+        supported=True,
+        reason=row.reason,
+        marker_pairs=row.marker_pairs,
+        quality=quality,
+        caveat=caveat,
+        measured=measured,
+    )
+
+
 class G2PCapability:
-    """Probes and caches which languages the phonemizer can actually handle."""
+    """Probes which languages the phonemizer can handle, and reports quality."""
 
     def __init__(self, converter: PhoneticConverter | None = None) -> None:
         self._converter = converter
         self._results: dict[str, LanguageSupport] = {}
+        #: Last *complete* report, so a non-blocking read has something to return.
+        self._last_report: dict[str, LanguageSupport] = {}
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
@@ -133,7 +312,7 @@ class G2PCapability:
             cached = self._results.get(wanted)
             if cached is not None:
                 return cached
-            result = self._probe_uncached(wanted)
+            result = _with_quality(self._probe_uncached(wanted))
             self._results[wanted] = result
             return result
 
@@ -232,12 +411,39 @@ class G2PCapability:
         """Drop the cache and re-probe every language the registry knows."""
         with self._lock:
             self._results.clear()
+            self._last_report = {}
         return self.report()
 
-    def report(self) -> dict[str, LanguageSupport]:
-        """Probe every canonical language known to the voice registry."""
+    def report(self, *, block: bool = True) -> dict[str, LanguageSupport]:
+        """Support and quality for every canonical language in the registry.
+
+        ``block=True`` measures anything not yet probed — that costs one espeak
+        dictionary load per pending language (about 13.5 s for all nine on a cold
+        process), so it is for startup, tests and the evaluation harness only.
+
+        ``block=False`` is the request-path shape: it returns the last complete
+        report, or whatever has been probed so far plus the rest as pending. It
+        never loads a dictionary, which is what keeps ``capabilities()`` off the
+        synthesis hot path (review finding F3).
+        """
         languages = sorted({family.language for family in LANGUAGE_FAMILIES.values()})
-        return {language: self.probe(language) for language in languages}
+        if not block:
+            with self._lock:
+                if self._last_report:
+                    return dict(self._last_report)
+                return dict(self._results)
+
+        result = {language: self.probe(language) for language in languages}
+        with self._lock:
+            self._last_report = dict(result)
+        return result
+
+    def pending_languages(self) -> list[str]:
+        """Canonical languages that have not been measured yet in this process."""
+        known = sorted({family.language for family in LANGUAGE_FAMILIES.values()})
+        with self._lock:
+            rows = set(self._results)
+        return [language for language in known if language not in rows]
 
     # ------------------------------------------------------------------
     # Queries
@@ -274,16 +480,20 @@ class G2PCapability:
     def snapshot(self) -> dict:
         """Non-blocking view of what has been probed so far.
 
-        Safe for a health endpoint: it never pays the ~1.5 s per-language backend
-        load, and it names the languages still pending rather than omitting them
-        (an omitted language would look supported).
+        Safe for a health/capabilities endpoint: it never pays the ~1.5 s
+        per-language backend load, and it names the languages still pending rather
+        than omitting them (an omitted language would look supported).
         """
-        known = sorted({family.language for family in LANGUAGE_FAMILIES.values()})
         with self._lock:
             rows = dict(self._results)
-        pending = [language for language in known if language not in rows]
+        pending = self.pending_languages()
         return {
             "supported": [language for language, row in rows.items() if row.supported],
+            "with_caveats": [
+                row.as_dict()
+                for row in rows.values()
+                if row.supported and row.quality == QUALITY_CAVEATS
+            ],
             "unsupported": [row.as_dict() for row in rows.values() if not row.supported],
             "pending": pending,
             "languages": {language: row.as_dict() for language, row in rows.items()},
@@ -309,6 +519,16 @@ class G2PCapability:
         logger.info(
             "G2P languages supported (%d): %s", len(supported), ", ".join(supported) or "none"
         )
+        for row in report.values():
+            if row.supported and row.quality == QUALITY_CAVEATS:
+                logger.warning(
+                    "G2P language SUPPORTED WITH CAVEATS: %s — %s", row.language, row.caveat
+                )
+            elif row.supported and row.quality == QUALITY_UNVERIFIED:
+                logger.warning(
+                    "G2P language SUPPORTED BUT UNVERIFIED: %s — no round-trip measurement",
+                    row.language,
+                )
         for row in unsupported:
             logger.warning(
                 "G2P language UNAVAILABLE: %s (locale %s) — %s",
@@ -319,7 +539,7 @@ class G2PCapability:
         return report
 
 
-#: Process-wide probe cache. Cheap to read; the first read runs the probe.
+#: Process-wide probe cache. Cheap to read; the first blocking read runs the probe.
 g2p_capability = G2PCapability()
 
 
@@ -327,5 +547,13 @@ __all__ = [
     "G2PCapability",
     "LanguageSupport",
     "PROBE_SENTENCES",
+    "QUALITY_CAVEATS",
+    "QUALITY_PRODUCTION",
+    "QUALITY_RECORD_PATH",
+    "QUALITY_UNSUPPORTED",
+    "QUALITY_UNVERIFIED",
+    "THIN_EVIDENCE_SENTENCES",
     "g2p_capability",
+    "load_quality_record",
+    "reset_quality_cache",
 ]

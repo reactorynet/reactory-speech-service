@@ -198,8 +198,15 @@ def test_snapshot_after_probing_moves_every_language_out_of_pending():
 def test_tts_service_g2p_capabilities_has_the_documented_shape():
     payload = TTSService().g2p_capabilities()
 
-    assert set(payload) == {"supported", "unsupported", "pending", "languages"}
+    assert set(payload) == {
+        "supported",
+        "with_caveats",
+        "unsupported",
+        "pending",
+        "languages",
+    }
     assert isinstance(payload["supported"], list)
+    assert isinstance(payload["with_caveats"], list)
     assert isinstance(payload["unsupported"], list)
     assert isinstance(payload["pending"], list)
     assert isinstance(payload["languages"], dict)

@@ -100,8 +100,16 @@ class EngineCapabilities(BaseModel):
     #: Languages the voice pack advertises but the text front end cannot
     #: phonemise. They are not in ``languages``; requests for them return 422.
     unsupported_languages: list[str] = Field(default_factory=list)
-    #: Measured G2P support rows: ``{language, locale, supported, reason}``.
+    #: Languages that phonemise but whose round-trip quality is not clean:
+    #: ``{language, quality, caveat, measured}``. Advertising them as plain
+    #: language support would repeat the SPEECH-010 mistake one level down.
+    languages_with_caveats: list[dict] = Field(default_factory=list)
+    #: Measured G2P support *and* quality rows:
+    #: ``{language, locale, supported, quality, caveat, reason, measured}``.
     language_support: list[dict] = Field(default_factory=list)
+    #: Advertised languages whose text front end has not been probed yet in this
+    #: process. They are neither advertised nor refused until measured.
+    languages_pending: list[str] = Field(default_factory=list)
     native_rate: bool = False
     native_pitch: bool = False
     native_volume: bool = False

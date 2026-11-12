@@ -36,7 +36,7 @@ from app.core.contracts import (
 )
 from app.engines.base import EngineUnavailableError, UnknownVoiceError, lower_direction
 from app.services import voice_registry
-from app.services.g2p_capability import g2p_capability
+from app.services.g2p_capability import QUALITY_CAVEATS, g2p_capability
 from app.services.phonetic_converter import (
     PhoneticConversionError,
     ensure_text_is_readable,
@@ -506,21 +506,45 @@ class KokoroEngine:
         """
         voices = self.voices()
         advertised = catalogue_languages(voices)
-        support_rows = {row.language: row for row in g2p_capability.report().values()}
+        # ``block=False``: no request may pay the one-off espeak dictionary load
+        # (measured 13.45 s for nine languages on a cold process). This runs on
+        # the synthesis hot path because ``lower()`` reads ``capabilities()`` for
+        # the native rate/pitch/volume flags. Unprobed languages are reported in
+        # ``languages_pending`` rather than silently omitted or assumed good.
+        support_rows = {row.language: row for row in g2p_capability.report(block=False).values()}
+        # Only *measured* support is advertised. An unprobed language is pending,
+        # never optimistically listed: the whole defect this module exists to fix
+        # was advertising a language nobody had measured.
         supported = [
             language
             for language in advertised
-            if language not in support_rows or support_rows[language].supported
+            if language in support_rows and support_rows[language].supported
         ]
-        unsupported = [language for language in advertised if language not in supported]
+        # A pending language is not an unsupported one. Only a *measured* refusal
+        # belongs in unsupported_languages; anything unprobed is reported as
+        # pending so a cold process says "not yet" instead of "cannot".
+        unsupported = [
+            language
+            for language in advertised
+            if language in support_rows and not support_rows[language].supported
+        ]
+        with_caveats = [
+            support_rows[language].as_dict()
+            for language in advertised
+            if language in support_rows and support_rows[language].quality == QUALITY_CAVEATS
+        ]
         return EngineCapabilities(
             engine=self.id,
             languages=supported,
             unsupported_languages=unsupported,
+            languages_with_caveats=with_caveats,
             language_support=[
                 support_rows[language].as_dict()
                 for language in advertised
                 if language in support_rows
+            ],
+            languages_pending=[
+                language for language in advertised if language not in support_rows
             ],
             native_rate=True,
             native_pitch=False,
@@ -560,6 +584,8 @@ class KokoroEngine:
             "license": self.license,
             "languages": capabilities.languages,
             "unsupported_languages": capabilities.unsupported_languages,
+            "languages_with_caveats": capabilities.languages_with_caveats,
+            "languages_pending": capabilities.languages_pending,
             "language_support": capabilities.language_support,
             "voice_count": len(self.voices()),
             "default_voice": voice_registry.default_voice_id(),

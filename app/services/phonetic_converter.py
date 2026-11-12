@@ -126,7 +126,27 @@ SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
     "cyrillic": re.compile(r"[\u0400-\u04ff\u0500-\u052f]"),
     "greek": re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]"),
     "thai": re.compile(r"[\u0e00-\u0e7f]"),
+    # Mathematical operators, arrows and the common arithmetic signs. They are
+    # not a language's orthography; espeak reads them as letter names, which is
+    # what a reader of "the value of π is 3.14" expects.
+    "math": re.compile(r"[\u2200-\u22ff\u2190-\u21ff\u00b1\u00d7\u00f7\u2032\u2033]"),
 }
+
+#: Scripts that are readable *alongside* Latin text, measured on this backend.
+#:
+#: Review finding F2: the first cut refused "The value of π is 3.14" because π is
+#: Greek. That is a regression — espeak reads it correctly ("pˈaɪ"), so the guard
+#: was refusing text the phonemizer can speak, which is not what the ticket asked
+#: for. Greek letters and mathematical symbols are ordinary developer copy
+#: ("Use Δ for difference", "sum ∑ of the series") and are allowed wherever Latin is.
+SCRIPT_READABLE_WITH_LATIN: frozenset[str] = frozenset({"greek", "math"})
+
+#: How many characters of an otherwise-unreadable script are tolerated before the
+#: whole utterance is refused. One, because a single foreign letter is read
+#: correctly by espeak ("Option Д" -> "ˈɑːpʃən dˈɛː") while a foreign *word* is spelt out
+#: ("Привет" -> "pˈɛː ˈɛɹ ˈɪː vˈɛː jˈɛː tˈɛː"). One character is therefore a
+#: legitimate loanword glyph; two or more is a word the voice cannot read.
+SCRIPT_ALLOWANCE_CHARS = 1
 
 #: Scripts each language's own orthography uses, by ISO 639-1 (or engine locale)
 #: prefix, plus Latin because every shipped language reads Latin loanwords.
@@ -139,7 +159,7 @@ SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
 #: the backend to accept or reject, so a custom voice pack is not broken by it.
 READABLE_SCRIPTS: dict[str, frozenset[str]] = {
     **{
-        code: frozenset({"latin"})
+        code: frozenset({"latin"}) | SCRIPT_READABLE_WITH_LATIN
         for code in (
             "en", "es", "pt", "fr", "it", "de", "nl", "sv", "da", "no", "nb", "nn",
             "fi", "is", "pl", "cs", "sk", "sl", "hr", "bs", "tr", "az", "id", "ms",
@@ -147,29 +167,29 @@ READABLE_SCRIPTS: dict[str, frozenset[str]] = {
             "gd", "mt", "af", "sw", "tl", "fil",
         )
     },
-    "hi": frozenset({"devanagari", "latin"}),
-    "mr": frozenset({"devanagari", "latin"}),
-    "ne": frozenset({"devanagari", "latin"}),
-    "zh": frozenset({"han", "latin"}),
-    "cmn": frozenset({"han", "latin"}),
-    "yue": frozenset({"han", "latin"}),
-    "ja": frozenset({"kana", "han", "latin"}),
-    "ko": frozenset({"hangul", "han", "latin"}),
-    "ar": frozenset({"arabic", "latin"}),
-    "ur": frozenset({"arabic", "latin"}),
-    "fa": frozenset({"arabic", "latin"}),
-    "ps": frozenset({"arabic", "latin"}),
-    "he": frozenset({"hebrew", "latin"}),
-    "iw": frozenset({"hebrew", "latin"}),
-    "ru": frozenset({"cyrillic", "latin"}),
-    "uk": frozenset({"cyrillic", "latin"}),
-    "bg": frozenset({"cyrillic", "latin"}),
-    "sr": frozenset({"cyrillic", "latin"}),
-    "mk": frozenset({"cyrillic", "latin"}),
-    "be": frozenset({"cyrillic", "latin"}),
-    "kk": frozenset({"cyrillic", "latin"}),
-    "el": frozenset({"greek", "latin"}),
-    "th": frozenset({"thai", "latin"}),
+    "hi": frozenset({"devanagari", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "mr": frozenset({"devanagari", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ne": frozenset({"devanagari", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "zh": frozenset({"han", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "cmn": frozenset({"han", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "yue": frozenset({"han", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ja": frozenset({"kana", "han", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ko": frozenset({"hangul", "han", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ar": frozenset({"arabic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ur": frozenset({"arabic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "fa": frozenset({"arabic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ps": frozenset({"arabic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "he": frozenset({"hebrew", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "iw": frozenset({"hebrew", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "ru": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "uk": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "bg": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "sr": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "mk": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "be": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "kk": frozenset({"cyrillic", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "el": frozenset({"greek", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
+    "th": frozenset({"thai", "latin"}) | SCRIPT_READABLE_WITH_LATIN,
 }
 
 #: Language codes whose built-in lexicon, unit and abbreviation expansions apply.
@@ -265,6 +285,13 @@ def unreadable_script(text: str, locale: str | None) -> str | None:
     A language absent from :data:`READABLE_SCRIPTS` returns ``None`` — the backend
     keeps the final say, so an out-of-tree voice pack is not broken by a table it
     is not in.
+
+    Up to :data:`SCRIPT_ALLOWANCE_CHARS` characters of a foreign script are
+    tolerated and fall through to the output-side check: one foreign letter is a
+    glyph espeak reads ("Option Д"), whereas a foreign word is spelt out
+    ("Привет" -> "pˈɛː ˈɛɹ ˈɪː vˈɛː jˈɛː tˈɛː"). Greek letters and mathematical
+    symbols are not treated as foreign at all for Latin-script languages; see
+    :data:`SCRIPT_READABLE_WITH_LATIN`.
     """
     prefix = (locale or "").strip().lower().replace("_", "-").split("-")[0]
     if not prefix:
@@ -275,7 +302,8 @@ def unreadable_script(text: str, locale: str | None) -> str | None:
     for name, pattern in SCRIPT_PATTERNS.items():
         if name in allowed:
             continue
-        if pattern.search(text or ""):
+        found = pattern.findall(text or "")
+        if len(found) > SCRIPT_ALLOWANCE_CHARS:
             return name
     return None
 

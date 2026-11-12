@@ -326,9 +326,26 @@ class EngineCapabilities(BaseModel):
             "cannot phonemise; requests for them return 422 rather than garbage"
         ),
     )
+    languages_with_caveats: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Languages that phonemise but whose measured round-trip quality is not "
+            "clean (quality='caveats'), with the caveat and the measured CER/WER"
+        ),
+    )
     language_support: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Measured G2P support per language (language, locale, supported, reason)",
+        description=(
+            "Measured G2P support and quality per language "
+            "(language, locale, supported, quality, caveat, reason, measured)"
+        ),
+    )
+    languages_pending: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Languages whose text front end has not been probed yet in this process. "
+            "They are neither advertised nor refused until measured."
+        ),
     )
     voice_count: int = 0
     default_voice: str | None = None

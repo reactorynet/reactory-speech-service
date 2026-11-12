@@ -1,34 +1,58 @@
-"""SPEECH-010 acceptance: per-language round-trip intelligibility.
+"""SPEECH-010 acceptance: per-language round-trip intelligibility, unselected.
 
-Synthesise a sentence with the real Kokoro voice for one language family, then
-transcribe it with the local faster-whisper model and score the transcript
-against the source text. This is exactly the technique that found the ticket: a
-valid WAV is not evidence of anything — the ticket's Japanese sample was 773 KB
-of perfectly valid silence-ish nonsense. The words that come back are the
-evidence.
+This runs the **committed** golden corpus — every entry, every representative
+voice — through the shipped ``app/eval`` harness: synthesise with the real Kokoro
+voice, transcribe with the local faster-whisper model, compare to the source. A
+valid WAV is not evidence of anything; the ticket's Japanese case was 773 KB of
+audio that said nothing.
 
-The tests deliberately drive the **shipped evaluation harness** (``app/eval``:
-the golden corpus, the runner, the round-trip metrics and the local transcriber)
-rather than a second harness of their own. SPEECH-007 owns that machinery; this
-file only supplies the per-language regression cases and the acceptance
-thresholds.
+Why the assertions look the way they do
+---------------------------------------
+Review finding F1 rejected an earlier revision of this file because it measured a
+hand-picked subset (one short greeting for Mandarin, and the French greeting
+replaced by the numbers sentence that scored better). That produced a reassuring
+"0 quality failures" that the committed corpus does not support:
+``zh-narration-long`` scores CER 0.92 with ``zf_xiaoxiao``.
+
+So this module no longer asserts "every sentence is under target" — that is
+false, and asserting it would only be passable by selecting sentences. It asserts
+the thing that actually matters for the ticket: **the published evidence matches
+the measurement**. Concretely:
+
+* every entry the corpus has for a language is measured (nothing is skipped);
+* the measured figures equal ``app/eval/data/language-quality.json``, which is
+  what the catalogue table and ``/api/tts/capabilities`` report;
+* a language with a failing sentence is classified ``caveats`` and named with its
+  measured CER, instead of being advertised as a clean "yes";
+* a language with no failing sentence is classified ``production``;
+* Japanese is skipped with a measured reason rather than measured as nonsense.
+
+Adding a sentence to the corpus therefore either passes (and stays
+``production``) or fails (and forces the language into ``caveats`` everywhere it
+is documented). There is no third option in which it quietly disappears.
 
 Requires the real model files (``make download-models``): the Kokoro pack and a
-mounted faster-whisper model. When either is absent the module skips with the
-reason, so a machine without models cannot report a false pass.
+mounted faster-whisper model. Without them the module skips with the reason, so a
+machine without models cannot report a false pass.
 """
 
 from __future__ import annotations
 
-import re
+import json
 
 import pytest
 
 from app.config import settings
-from app.eval.corpus import GoldenCorpus, load_corpus
+from app.eval.corpus import load_corpus
 from app.eval.runner import EvaluationRunner, RunnerConfig
 from app.eval.stt import LocalTranscriber
-from app.services.g2p_capability import g2p_capability
+from app.services.g2p_capability import (
+    QUALITY_CAVEATS,
+    QUALITY_PRODUCTION,
+    QUALITY_RECORD_PATH,
+    g2p_capability,
+    load_quality_record,
+)
 from app.services.stt_service import STTService
 from app.services.tts_service import TTSService
 
@@ -55,33 +79,16 @@ REPRESENTATIVE_VOICES = (
     "jf_alpha",
 )
 
-#: One sentence per language, taken from the golden corpus by id so the measured
-#: text is the committed text (no second, drifting copy).
-#:
-#: French uses ``fr-numbers`` rather than the greeting: the greeting's proper
-#: name ("Werner") is misheard by the pinned ``base`` Whisper model as "Wayne",
-#: which measures the recogniser, not the synthesiser. ``fr-numbers`` measured
-#: WER 0.25 (target 0.50). The French *brand-name* defect is covered at the
-#: phoneme level in ``test_multilingual_g2p.py``, where it belongs.
-REGRESSION_ENTRY_IDS = (
-    "en-greeting-short",
-    "es-greeting-short",
-    "fr-numbers",
-    "hi-greeting-short",
-    "it-greeting-short",
-    "pt-greeting-short",
-    "zh-greeting-short",
-    "ja-greeting-short",
-)
-
 #: A render may not take more than this multiple of the expected duration for its
 #: text. The Japanese defect produced ~8x (16.11 s for a short sentence), so the
 #: bound is the signal, not a quality judgement about pacing.
 MAX_DURATION_RATIO = 2.2
 MIN_DURATION_RATIO = 0.4
 
-HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
-DEVANAGARI = re.compile(r"[\u0900-\u097f]")
+#: How far a live measurement may drift from the committed record before the
+#: record is stale. Deterministic decoding (temperature 0) makes this tight; the
+#: margin only absorbs model/CPU nondeterminism.
+RECORD_TOLERANCE = 0.02
 
 
 def _models_mounted() -> bool:
@@ -90,11 +97,7 @@ def _models_mounted() -> bool:
 
 @pytest.fixture(scope="module")
 def measured():
-    """Render the regression corpus once and return the harness report pieces.
-
-    Module-scoped because loading Kokoro (325 MB) and Whisper (base) dominates
-    the runtime, and none of the assertions mutate the services.
-    """
+    """Measure the whole committed corpus once; return cells plus the skips."""
     pytest.importorskip("faster_whisper", reason="faster-whisper is not installed")
     if not _models_mounted():
         pytest.skip(
@@ -115,24 +118,9 @@ def measured():
         )
 
     corpus = load_corpus()
-    subset = GoldenCorpus(
-        entries=tuple(
-            sorted(
-                corpus.filtered(ids=REGRESSION_ENTRY_IDS),
-                key=lambda entry: entry.id,
-            )
-        ),
-        path=corpus.path,
-        digest=corpus.digest,
-        schema_version=corpus.schema_version,
-        description="SPEECH-010 per-language round-trip subset",
-        metrics_note=corpus.metrics_note,
-    )
-    assert subset.entries, "the regression subset is empty; the corpus ids moved"
-
     engine = tts.engine_manager.get("kokoro")
     runner = EvaluationRunner(
-        subset,
+        corpus,
         [engine],
         LocalTranscriber(stt),
         config=RunnerConfig(repeats=1, probe_rate=1.5),
@@ -144,128 +132,221 @@ def measured():
         "cells": cells,
         "skipped": list(runner.skipped),
         "supported": g2p_capability.supported_languages(),
+        "record": load_quality_record(),
     }
 
 
-def _cell_by_voice(measured, voice_id):
-    return next((cell for cell in measured["cells"] if cell.voice == voice_id), None)
-
-
-def _entry(cell, entry_id):
-    return next((item for item in cell.entries if item["id"] == entry_id), None)
+def _cells_by_language(measured):
+    grouped: dict[str, list] = {}
+    for cell in measured["cells"]:
+        grouped.setdefault(cell.language, []).append(cell)
+    return grouped
 
 
 # ---------------------------------------------------------------------------
-# Every measured language must actually round-trip
+# Nothing is skipped: the measurement covers every corpus sentence
 # ---------------------------------------------------------------------------
 
 
-def test_every_supported_language_round_trips(measured):
-    """Each measured cell must come back as recognisable text in its language.
+def test_every_corpus_entry_for_a_language_is_measured(measured):
+    """No sentence may be dropped from the acceptance measurement.
 
-    This is the acceptance criterion for every language ``/api/tts/capabilities``
-    advertises: if it cannot pass here it must not be advertised.
+    This is the direct guard against review finding F1: a subset cannot be
+    presented as the language's quality.
     """
-    measured_languages = {cell.language for cell in measured["cells"]}
-    supported_languages = {
-        canonical.split("-")[0] for canonical in measured["supported"]
+    corpus = measured["corpus"]
+    measured_ids = {
+        item["id"] for cell in measured["cells"] for item in cell.entries
     }
-    missing = supported_languages - measured_languages
+    expected: set[str] = set()
+    for language in {cell.language for cell in measured["cells"]}:
+        expected.update(entry.id for entry in corpus.for_language(language))
+
+    missing = expected - measured_ids
+    assert not missing, f"corpus sentences were not measured: {sorted(missing)}"
+
+
+def test_advertised_languages_all_have_a_measured_cell(measured):
+    """Every language capabilities advertises was actually measured here."""
+    measured_languages = {cell.language for cell in measured["cells"]}
+    advertised = {(tag or "").split("-")[0] for tag in measured["supported"]}
+    missing = advertised - measured_languages
     assert not missing, (
-        f"these advertised languages have no measured cell: {sorted(missing)} "
+        f"advertised languages with no measured cell: {sorted(missing)} "
         f"(measured: {sorted(measured_languages)})"
     )
 
+
+def test_no_render_is_structurally_broken(measured):
+    """Silence, undecodable audio or a missing transcript is a failure, not a WER."""
     problems = []
     for cell in measured["cells"]:
         for item in cell.entries:
-            target = measured["corpus"].get(item["id"]).max_wer or 1.0
             if item["status"] != "ok":
-                problems.append(f"{cell.language}/{cell.voice}: {item['status']} {item['error']}")
+                problems.append(f"{cell.voice}/{item['id']}: {item['status']}")
             elif "silent_output" in item["checks"]:
-                problems.append(f"{cell.language}/{cell.voice}: silent output")
+                problems.append(f"{cell.voice}/{item['id']}: silent")
             elif item["wer"] is None:
-                problems.append(f"{cell.language}/{cell.voice}: no transcript")
-            elif item["wer"] > target:
-                problems.append(
-                    f"{cell.language}/{cell.voice}: WER {item['wer']:.2f} > {target:.2f} "
-                    f"(heard {item['transcript']!r})"
-                )
+                problems.append(f"{cell.voice}/{item['id']}: no transcript")
     assert not problems, "\n".join(problems)
 
 
 def test_duration_stays_proportional_to_the_sentence(measured):
-    """The Japanese signal: 21 characters must not produce 16 seconds of audio.
-
-    Measured on the cells that *are* supported, so the bound is a real guard
-    against a future G2P regression that spells text out rather than reading it.
-    """
+    """The Japanese signal: 21 characters must not produce 16 seconds of audio."""
     offenders = []
     for cell in measured["cells"]:
         for item in cell.entries:
             ratio = item["duration_ratio"]
             if ratio is None:
-                offenders.append(f"{cell.language}/{cell.voice}: no duration")
+                offenders.append(f"{cell.voice}/{item['id']}: no duration")
             elif not MIN_DURATION_RATIO <= ratio <= MAX_DURATION_RATIO:
                 offenders.append(
-                    f"{cell.language}/{cell.voice}: {item['duration_s']:.2f}s "
-                    f"= {ratio:.2f}x expected"
+                    f"{cell.voice}/{item['id']}: {item['duration_s']:.2f}s = {ratio:.2f}x"
                 )
     assert not offenders, "\n".join(offenders)
 
 
-def test_chinese_speaks_chinese(measured):
-    """``zf_xiaoxiao`` and ``zm_yunjian`` must return Chinese text, not an error."""
-    for voice_id in ("zf_xiaoxiao", "zm_yunjian"):
-        cell = _cell_by_voice(measured, voice_id)
-        assert cell is not None, f"{voice_id} produced no measurement cell"
-        assert cell.language == "zh"
-        item = _entry(cell, "zh-greeting-short")
-        assert item is not None and item["status"] == "ok", f"{voice_id}: {item}"
-        assert item["transcript"], f"{voice_id}: empty transcript"
-        assert HAN.search(item["transcript"]), (
-            f"{voice_id}: transcript has no Han characters: {item['transcript']!r}"
-        )
-        # Guard against the pre-fix failure mode: an espeak backend error would
-        # have produced no audio at all.
-        assert "synthesis_error" not in item["checks"]
+# ---------------------------------------------------------------------------
+# The published evidence equals the measurement — this is the real assertion
+# ---------------------------------------------------------------------------
 
 
-def test_hindi_returns_devanagari(measured):
-    """The round trip must come back in Devanagari, not Perso-Arabic (Urdu).
+def test_measured_quality_matches_the_committed_record(measured):
+    """The record that docs and capabilities read must match a live run.
 
-    The ticket saw Urdu script and suspected a language-tag mismatch. It is not:
-    ``language="hi"`` reaches faster-whisper unchanged (see the investigation in
-    the completion report). The pinned ``base`` model chooses the script from the
-    acoustics and prefers Perso-Arabic; the harness pins the character set with a
-    fixed Devanagari ``initial_prompt`` that carries no corpus content.
+    If this fails, either the corpus changed or the models did: regenerate the
+    record with ``scripts/record_language_quality.py`` and update the catalogue.
+    It must never be "fixed" by relaxing the assertion.
     """
-    cell = _cell_by_voice(measured, "hf_alpha")
-    assert cell is not None, "hf_alpha produced no measurement cell"
-    item = _entry(cell, "hi-greeting-short")
-    assert item is not None and item["status"] == "ok", f"hf_alpha: {item}"
-    assert item["transcript"], "empty Hindi transcript"
-    assert DEVANAGARI.search(item["transcript"]), (
-        f"expected Devanagari, got {item['transcript']!r}"
+    record = measured["record"]
+    assert record, f"missing quality record at {QUALITY_RECORD_PATH}"
+
+    grouped = _cells_by_language(measured)
+    problems = []
+    for language, cells in grouped.items():
+        row = record.get(language)
+        if row is None:
+            problems.append(f"{language}: measured but absent from the record")
+            continue
+        live_wer = max(
+            (item["wer"] for cell in cells for item in cell.entries if item["wer"] is not None),
+            default=0.0,
+        )
+        live_cer = max(
+            (item["cer"] for cell in cells for item in cell.entries if item["cer"] is not None),
+            default=0.0,
+        )
+        recorded_wer = row.get("worst_wer")
+        recorded_cer = row.get("worst_cer")
+        if recorded_wer is None or abs(live_wer - recorded_wer) > RECORD_TOLERANCE + 1e-9:
+            problems.append(
+                f"{language}: worst WER measured {live_wer:.4f} != recorded {recorded_wer}"
+            )
+        if recorded_cer is None or abs(live_cer - recorded_cer) > RECORD_TOLERANCE + 1e-9:
+            problems.append(
+                f"{language}: worst CER measured {live_cer:.4f} != recorded {recorded_cer}"
+            )
+        live_failing = sorted(
+            {
+                item["id"]
+                for cell in cells
+                for item in cell.entries
+                if "wer_threshold" in item["checks"]
+            }
+        )
+        recorded_failing = sorted(row.get("entries_over_target") or [])
+        if live_failing != recorded_failing:
+            problems.append(
+                f"{language}: failing entries measured {live_failing} != recorded "
+                f"{recorded_failing}"
+            )
+    assert not problems, "\n".join(problems)
+    assert json.dumps(record, sort_keys=True)  # the record is serialisable and stable
+
+
+def test_each_language_is_classified_by_its_measured_evidence(measured):
+    """``production`` means no sentence failed; ``caveats`` names the one that did.
+
+    This is the rule that makes "advertised without evidence" impossible: the
+    classification is derived from the failing-entry list, so it cannot be typed
+    in by hand.
+    """
+    record = measured["record"]
+    for language, row in record.items():
+        quality = row.get("quality")
+        failing = list(row.get("entries_over_target") or [])
+        if quality == QUALITY_PRODUCTION:
+            assert failing == [], f"{language} is production but has failures {failing}"
+        elif quality == QUALITY_CAVEATS:
+            assert failing, f"{language} is caveats but names no failing entry"
+        else:
+            assert quality not in (None, ""), f"{language} has no classification"
+
+
+def test_the_known_hard_sentences_are_recorded_not_hidden(measured):
+    """The three sentences that failed the reviewer's run are measured and named.
+
+    Pinning them individually makes it obvious if a future edit quietly replaces
+    the corpus sentence or drops a voice, and documents in the suite itself that
+    these results are accepted limitations rather than unnoticed failures.
+    """
+    record = measured["record"]
+
+    chinese = record["zh"]
+    assert "zh-narration-long" in (chinese.get("entries_over_target") or [])
+    assert chinese["quality"] == QUALITY_CAVEATS
+    assert chinese["worst_cer"] > 0.5, (
+        "the Chinese narration sentence measured under target; the caveat recorded in "
+        "the catalogue is now stale and should be removed"
     )
 
-
-# ---------------------------------------------------------------------------
-# The unsupported language is refused, documented and never measured
-# ---------------------------------------------------------------------------
+    french = record["fr"]
+    assert "fr-greeting-short" in (french.get("entries_over_target") or [])
+    assert french["quality"] == QUALITY_CAVEATS
 
 
 def test_japanese_is_skipped_with_a_reason_not_measured(measured):
-    """Japanese is advertised by the acoustics but cannot be phonemised here.
-
-    The honest outcome is an explicit skip with the measured reason — never a
-    WER computed from fluent nonsense.
-    """
+    """Japanese cannot be phonemised here, so it must not be measured as nonsense."""
     assert all(cell.language != "ja" for cell in measured["cells"]), (
         "a Japanese cell was measured; the G2P guard did not fire"
     )
     japanese = [row for row in measured["skipped"] if row["language"] == "ja"]
     assert japanese, f"Japanese was dropped silently: skipped={measured['skipped']}"
-    reason = japanese[0]["reason"] or ""
-    assert "spells" in reason.lower(), f"unhelpful reason: {reason!r}"
+    assert "spells" in (japanese[0]["reason"] or "").lower()
     assert "ja" not in measured["supported"]
+
+
+# ---------------------------------------------------------------------------
+# Script checks that the record cannot express
+# ---------------------------------------------------------------------------
+
+
+def test_chinese_returns_chinese_text(measured):
+    """Both acceptance voices must come back as Han text (not an empty transcript)."""
+    import re
+
+    han = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+    for voice_id in ("zf_xiaoxiao", "zm_yunjian"):
+        cell = next((c for c in measured["cells"] if c.voice == voice_id), None)
+        assert cell is not None, f"{voice_id} produced no measurement cell"
+        greeting = next(e for e in cell.entries if e["id"] == "zh-greeting-short")
+        assert greeting["transcript"] and han.search(greeting["transcript"]), (
+            f"{voice_id}: no Han characters in {greeting['transcript']!r}"
+        )
+
+
+def test_hindi_returns_devanagari(measured):
+    """The Devanagari guarantee now holds in the service, not just the harness.
+
+    ``SCRIPT_PROMPTS`` moved into ``STTService`` (review finding F4), so
+    ``/api/stt/transcribe`` and this harness return the same script.
+    """
+    import re
+
+    devanagari = re.compile(r"[\u0900-\u097f]")
+    cell = next((c for c in measured["cells"] if c.voice == "hf_alpha"), None)
+    assert cell is not None, "hf_alpha produced no measurement cell"
+    item = cell.entries[0]
+    assert item["transcript"] and devanagari.search(item["transcript"]), (
+        f"expected Devanagari, got {item['transcript']!r}"
+    )

@@ -26,21 +26,10 @@ from typing import Protocol, runtime_checkable
 from app.services.stt_service import STTService
 
 
-#: Languages whose base-tier Whisper output picks the wrong *script*.
-#:
-#: Spelling is not content: Whisper's decoder chooses between Devanagari and
-#: Perso-Arabic for Hindi, and between Simplified and Traditional for Chinese,
-#: from acoustic evidence alone. On the pinned ``base`` model it picks Urdu for
-#: Hindi and Traditional for Chinese, so a correct render scores as a total miss
-#: against a Devanagari/Simplified reference purely because the characters differ.
-#: Each prompt below is a fixed, language-generic sentence that names the script
-#: and carries no content from the corpus; it steers character set only. Measured
-#: on ``base``: Hindi `نمستی ورنر...` -> `नमस्टी वारनर...`, Chinese `你要為Ena...`
-#: -> `你要为Ena...`. Same audio, same model, same beam width.
-SCRIPT_PROMPTS: dict[str, str] = {
-    "hi": "यह एक हिन्दी में लिखा हुआ वाक्य है।",
-    "zh": "这是一个用简体中文写的句子。",
-}
+# The script prompts live in the STT service so a direct /api/stt/transcribe call
+# and this harness produce the same characters (review finding F4). Re-exported
+# here because the harness's describe() documents them.
+from app.services.stt_service import SCRIPT_PROMPTS  # noqa: E402
 
 
 class TranscriberUnavailable(RuntimeError):
@@ -143,7 +132,9 @@ class LocalTranscriber:
             vad=False,
             word_timestamps=False,
             temperature=0.0,
-            initial_prompt=self._script_prompts.get((language or "").lower()),
+            initial_prompt=self._script_prompts.get(
+                (language or "").strip().lower().split("-")[0]
+            ),
         )
         text = result.get("text")
         return text if isinstance(text, str) else None

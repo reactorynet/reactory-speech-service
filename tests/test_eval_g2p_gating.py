@@ -202,3 +202,33 @@ def test_route_matrix_defaults_to_every_corpus_language(capsys):
 
     assert {row["language"] for row in decisions} == set(load_corpus().languages)
     assert all(row["engine"] for row in decisions)
+
+
+# ---------------------------------------------------------------------------
+# The summary line must not read as an endorsement of a failing language
+# ---------------------------------------------------------------------------
+
+
+def test_summary_separates_audio_integrity_from_quality_failures(monkeypatch):
+    """Review finding F1: ``passed=yes`` beside ``quality_failures=3`` is misleading."""
+    from app.eval import report as report_module
+
+    summary = report_module.render_table(
+        {
+            "cells": [],
+            "status": {
+                "cells": 9,
+                "entries": 36,
+                "integrity_failures": 0,
+                "quality_failures": 3,
+                "cells_skipped": 1,
+                "passed": True,
+            },
+            "failures": [],
+            "meta": {"transcriber": {"enabled": True}},
+        }
+    )
+
+    assert "quality_failures=3" in summary
+    assert "passed=yes (audio integrity only" in summary
+    assert "cells_skipped=1" in summary

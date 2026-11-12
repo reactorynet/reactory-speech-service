@@ -1,0 +1,412 @@
+{
+  "schema_version": 1,
+  "description": "Per-language round-trip quality measured on the committed golden corpus through the local faster-whisper model. This file, not a hand-written table, is what docs/voices/kokoro-voice-catalogue.md and GET /api/tts/capabilities report. Regenerate with the command below; app/eval/tests assert the values still match a live run.",
+  "generated_by": "PYTHONPATH=. python scripts/record_language_quality.py --voices af_heart,bf_emma,ef_dora,ff_siwis,hf_alpha,if_sara,pf_dora,zf_xiaoxiao,zm_yunjian,jf_alpha",
+  "corpus": {
+    "digest": "sha256:31b3518296a8263e9b3f6844fc3ebe025587007d763e2c361328588f5c1b74e8",
+    "entries": 25,
+    "languages": [
+      "en",
+      "es",
+      "fr",
+      "hi",
+      "it",
+      "ja",
+      "pt",
+      "zh"
+    ]
+  },
+  "stt_model": "base",
+  "languages": {
+    "en": {
+      "quality": "production",
+      "voices": {
+        "af_heart": [
+          {
+            "id": "en-greeting-short",
+            "wer": 0.1667,
+            "cer": 0.1053,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "Hi Varner, how can I help?"
+          },
+          {
+            "id": "en-greeting-calm",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "Good morning, ready when you are."
+          },
+          {
+            "id": "en-narration-long",
+            "wer": 0.0213,
+            "cer": 0.0046,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "The Reactary platform turns a support ticket into a reviewable change. A planning agent breaks the work into steps, a developer agent writes the code, and a reviewer agent checks it against the ticket. Every step is recorded so the team can see what happened and why."
+          },
+          {
+            "id": "en-domain-vocabulary",
+            "wer": 0.25,
+            "cer": 0.0735,
+            "target": 0.45,
+            "over_target": false,
+            "transcript": "Reactory, GraphQL, Kubernetes, On-Roman 9, and FQDN all appear in the platform vocabulary."
+          },
+          {
+            "id": "en-domain-products",
+            "wer": 0.2632,
+            "cer": 0.0921,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "On-Roman 9 runtime, faster whisper and Kakoro 82M run entirely on the CPU with no GPU and no paid EPI."
+          },
+          {
+            "id": "en-abbreviations",
+            "wer": 0.1765,
+            "cer": 0.1724,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "The EPI returns JSON over HTTPS, and the CLI reads the SDK, for example, for the FQDN."
+          },
+          {
+            "id": "en-numbers",
+            "wer": 0.0625,
+            "cer": 0.1186,
+            "target": 0.45,
+            "over_target": false,
+            "transcript": "Your invoice totals 1-284-50-rand for 12 seats with a 7-5% discount."
+          },
+          {
+            "id": "en-dates",
+            "wer": 0.1111,
+            "cer": 0.0,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "The sprint ends on 14 March, 2027 at 0.9. 30, and the review is on 2027-03-15."
+          },
+          {
+            "id": "en-identifiers",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "Ticket Speech 007 covers the evaluation harness for Phase 6."
+          },
+          {
+            "id": "en-question-prosody",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "which engine should route an empathetic apology in French."
+          },
+          {
+            "id": "en-punctuation",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "Wait, did you mean the staging cluster or production?"
+          }
+        ],
+        "bf_emma": [
+          {
+            "id": "en-greeting-short",
+            "wer": 0.1667,
+            "cer": 0.2105,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "Hi Varna, how can I help?"
+          },
+          {
+            "id": "en-greeting-calm",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "Good morning, ready when you are."
+          },
+          {
+            "id": "en-narration-long",
+            "wer": 0.0213,
+            "cer": 0.0046,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "The Reactary Platform turns a support ticket into a reviewable change. A planning agent breaks the work into steps, a developer agent writes the code, and a reviewer agent checks it against the ticket. Every step is recorded so the team can see what happened and why."
+          },
+          {
+            "id": "en-domain-vocabulary",
+            "wer": 0.25,
+            "cer": 0.0735,
+            "target": 0.45,
+            "over_target": false,
+            "transcript": "Reactory GraphQL, Kubernetes, on-roman 9, and FQDN all appear in the platform vocabulary."
+          },
+          {
+            "id": "en-domain-products",
+            "wer": 0.2632,
+            "cer": 0.0921,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "On Roman 9 runtime, Faster Whisper and Kakoro 82M run entirely on the CPU, with no GPU and no paid EPI."
+          },
+          {
+            "id": "en-abbreviations",
+            "wer": 0.1765,
+            "cer": 0.1724,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "The EPI returns JSON over HTTPS, and the CLI reads the SDK, for example, for the FQDN."
+          },
+          {
+            "id": "en-numbers",
+            "wer": 0.0625,
+            "cer": 0.1186,
+            "target": 0.45,
+            "over_target": false,
+            "transcript": "your invoice totals 1-284. 50-rand for 12 seats with a 7-5% discount."
+          },
+          {
+            "id": "en-dates",
+            "wer": 0.1111,
+            "cer": 0.0,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "The sprint ends on 14 March 2027 at 0.9, 30, and the review is on 2027-03-15."
+          },
+          {
+            "id": "en-identifiers",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "Ticket Speech 007 covers the evaluation harness for Phase 6."
+          },
+          {
+            "id": "en-question-prosody",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.35,
+            "over_target": false,
+            "transcript": "which engine should route an empathetic apology in French."
+          },
+          {
+            "id": "en-punctuation",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "Wait, did you mean the staging cluster or production?"
+          }
+        ]
+      },
+      "entries_measured": 22,
+      "entries_over_target": [],
+      "worst_cer": 0.2105,
+      "worst_wer": 0.2632,
+      "worst_entry": "en-greeting-short"
+    },
+    "es": {
+      "quality": "production",
+      "voices": {
+        "ef_dora": [
+          {
+            "id": "es-greeting-short",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "Hola, Werner, en qué puedo ayudarte hoy."
+          },
+          {
+            "id": "es-narration-long",
+            "wer": 0.1053,
+            "cer": 0.0303,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "La plataforma reactori convierte un tiquet de soporte en un cambio revisable, paso a paso con cada decisión registrada."
+          }
+        ]
+      },
+      "entries_measured": 2,
+      "entries_over_target": [],
+      "worst_cer": 0.0303,
+      "worst_wer": 0.1053,
+      "worst_entry": "es-narration-long"
+    },
+    "fr": {
+      "quality": "caveats",
+      "voices": {
+        "ff_siwis": [
+          {
+            "id": "fr-greeting-short",
+            "wer": 0.6667,
+            "cer": 0.2444,
+            "target": 0.4,
+            "over_target": true,
+            "transcript": "Bonjour, Wayne, comme en pluie, je vous ai aidé aujourd'hui."
+          },
+          {
+            "id": "fr-narration-long",
+            "wer": 0.0385,
+            "cer": 0.0213,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "La plateforme réactorie transforme un ticket de support en une modification vérifiable, avec une étape de planification, une étape de développement et une étape de revue."
+          },
+          {
+            "id": "fr-numbers",
+            "wer": 0.25,
+            "cer": 0.0488,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "La facture s'élève à 1284, 50 rond pour 12 licences."
+          }
+        ]
+      },
+      "entries_measured": 3,
+      "entries_over_target": [
+        "fr-greeting-short"
+      ],
+      "worst_cer": 0.2444,
+      "worst_wer": 0.6667,
+      "worst_entry": "fr-greeting-short"
+    },
+    "hi": {
+      "quality": "production",
+      "voices": {
+        "hf_alpha": [
+          {
+            "id": "hi-greeting-short",
+            "wer": 0.3333,
+            "cer": 0.0435,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "नमस्ती वारनर में आपकी के से मदेत कर सकता हों"
+          }
+        ]
+      },
+      "entries_measured": 1,
+      "entries_over_target": [],
+      "worst_cer": 0.0435,
+      "worst_wer": 0.3333,
+      "worst_entry": "hi-greeting-short"
+    },
+    "it": {
+      "quality": "production",
+      "voices": {
+        "if_sara": [
+          {
+            "id": "it-greeting-short",
+            "wer": 0.0,
+            "cer": 0.0,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "Ciao Werner, come posso aiutarti oggi?"
+          }
+        ]
+      },
+      "entries_measured": 1,
+      "entries_over_target": [],
+      "worst_cer": 0.0,
+      "worst_wer": 0.0,
+      "worst_entry": null
+    },
+    "pt": {
+      "quality": "production",
+      "voices": {
+        "pf_dora": [
+          {
+            "id": "pt-greeting-short",
+            "wer": 0.2857,
+            "cer": 0.0312,
+            "target": 0.4,
+            "over_target": false,
+            "transcript": "Olá, o Erner, como posso ajudar você hoje."
+          }
+        ]
+      },
+      "entries_measured": 1,
+      "entries_over_target": [],
+      "worst_cer": 0.0312,
+      "worst_wer": 0.2857,
+      "worst_entry": "pt-greeting-short"
+    },
+    "zh": {
+      "quality": "caveats",
+      "voices": {
+        "zf_xiaoxiao": [
+          {
+            "id": "zh-greeting-short",
+            "wer": 0.5,
+            "cer": 0.5,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "你要为Ena今天我能帮你做神魔。"
+          },
+          {
+            "id": "zh-narration-long",
+            "wer": 0.9231,
+            "cer": 0.9231,
+            "target": 0.5,
+            "over_target": true,
+            "transcript": "鸭治平台宝气气,而工弹子弯弯纯和一神子和的代码边根位也够捕着欧洲热卫北级路下来。"
+          },
+          {
+            "id": "zh-domain-vocabulary",
+            "wer": 0.2812,
+            "cer": 0.2812,
+            "target": 0.6,
+            "over_target": false,
+            "transcript": "GraphQL Kubernetes War Ones都可以再系毕用上运行。"
+          }
+        ],
+        "zm_yunjian": [
+          {
+            "id": "zh-greeting-short",
+            "wer": 0.3571,
+            "cer": 0.3571,
+            "target": 0.5,
+            "over_target": false,
+            "transcript": "你靠为二纳今天我能帮你做神谋。"
+          },
+          {
+            "id": "zh-narration-long",
+            "wer": 0.7179,
+            "cer": 0.7179,
+            "target": 0.5,
+            "over_target": true,
+            "transcript": "这一拼他要把自己去,而共诞,万万曾亏一身子,好的代码边更美业过步走,都误会被记录下来。"
+          },
+          {
+            "id": "zh-domain-vocabulary",
+            "wer": 0.375,
+            "cer": 0.375,
+            "target": 0.6,
+            "over_target": false,
+            "transcript": "GraphQL Kubernetes 卧温都可以再系BUs 按原写。"
+          }
+        ]
+      },
+      "entries_measured": 6,
+      "entries_over_target": [
+        "zh-narration-long"
+      ],
+      "worst_cer": 0.9231,
+      "worst_wer": 0.9231,
+      "worst_entry": "zh-narration-long"
+    },
+    "ja": {
+      "quality": "unsupported",
+      "reason": "espeak-ng cannot read this script: it spells the characters out instead (8 language switches for the probe sentence, e.g. ['en', 'ja', 'en', 'ja'])",
+      "voices": {},
+      "entries_measured": 0,
+      "entries_over_target": [],
+      "worst_cer": null,
+      "worst_wer": null,
+      "worst_entry": null
+    }
+  }
+}
