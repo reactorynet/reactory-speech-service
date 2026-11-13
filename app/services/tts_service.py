@@ -49,6 +49,12 @@ from app.services.inference import InferenceExecutor
 from app.services.phonetic_converter import phonetic_converter
 from app.services.synthesis_cache import CacheEntry, SynthesisCache, build_cache_key
 from app.services.voice_design import default_direction
+from app.services.voice_cloning import (
+    CloneInactiveError,
+    CloneSynthesisContext,
+    CloningUnavailableError,
+    get_clone_service,
+)
 from app.services.voice_registry import (
     KOKORO_ENGINE,
     KOKORO_SAMPLE_RATE,
@@ -102,6 +108,8 @@ class SynthesisOutcome:
     cache_tier: str = "none"
     cache_key: str | None = None
     engine: str = ""
+    #: Signed provenance manifest, emitted for cloned (reference) voices only.
+    manifest: dict | None = None
 
     @property
     def cache_hit(self) -> bool:
@@ -140,6 +148,13 @@ class TTSService:
         )
         self._cache = cache or SynthesisCache()
         self._executor = executor or InferenceExecutor()
+        # Cloning is delegated to the engine adapter because it owns the loaded
+        # model *and* the watermark neutralisation; this service never imports
+        # torch.  The clone service calls the resolver at request time, so an
+        # unloaded engine means "cloning unavailable", not an import failure.
+        from app.services import voice_cloning as _voice_cloning
+
+        _voice_cloning.set_clone_backend_resolver(self._clone_backend)
 
     # ------------------------------------------------------------------
     # Backwards-compatible internals
@@ -238,12 +253,76 @@ class TTSService:
         return list(catalogue)
 
     def get_voice(self, voice_id: str) -> VoiceDescriptor | None:
-        """Return the descriptor for one voice, or ``None`` when it is unknown."""
+        """Return the descriptor for one voice, or ``None`` when it is unknown.
+
+        Clones resolve through the clone store even when inactive, so the HTTP
+        layer can answer 410 for a known-but-disabled clone instead of a bare
+        404 that hides the governance state.
+        """
         for engine in self._manager.engines:
             for descriptor in engine.voices():
                 if descriptor["id"] == voice_id:
                     return descriptor
+        clone = get_clone_service().describe(voice_id)
+        if clone is not None:
+            return clone
         return None
+
+    # ------------------------------------------------------------------
+    # Cloning (SPEECH-006 / ADR-0003)
+    # ------------------------------------------------------------------
+
+    def _clone_backend(self):
+        """The first registered engine that can clone, or ``None``."""
+        for engine in self._manager.engines:
+            getter = getattr(engine, "clone_backend", None)
+            if not callable(getter):
+                continue
+            backend = getter()
+            if backend is not None:
+                return backend
+        return None
+
+    @staticmethod
+    def _clone_context(voice: str | None) -> CloneSynthesisContext | None:
+        """Authorise a cloned voice **at request time**.
+
+        Raises :class:`CloneInactiveError` for a disabled, taken-down or expired
+        clone and :class:`CloningUnavailableError` when the embedding cannot be
+        read.  A plain voice returns ``None`` and the request is untouched.
+        """
+        if not voice:
+            return None
+        return get_clone_service().authorize_synthesis(voice)
+
+    @staticmethod
+    def _require_clone_still_active(context: CloneSynthesisContext | None) -> None:
+        """Fail an in-flight clone synthesis closed after a takedown.
+
+        Checked again immediately before audio is returned or cached, so a
+        takedown that lands during inference cannot leak a render.
+        """
+        if context is None:
+            return
+        if not get_clone_service().is_active(context.voice_id):
+            raise CloneInactiveError(
+                f"Voice '{context.voice_id}' was disabled while this request was in "
+                "flight; the render was discarded."
+            )
+
+    @staticmethod
+    def _record_clone_manifest(
+        context: CloneSynthesisContext | None, audio: bytes, text: str
+    ) -> dict | None:
+        """Emit (or reuse) the signed provenance manifest for a clone render."""
+        if context is None:
+            return None
+        return get_clone_service().record_synthesis(
+            context.voice_id,
+            audio,
+            text_length=len(text),
+            engine=context.engine,
+        )
 
     # ------------------------------------------------------------------
     # Capabilities
@@ -434,6 +513,10 @@ class TTSService:
         if direction is None and speed is None:
             direction = default_direction(voice)
         merged, _ = resolve_direction(speed, direction)
+        # Cloning is authorised before routing and again before returning audio.
+        # An inactive clone must never reach an engine, and a clone must never be
+        # substituted with another voice: the subject's voice or nothing.
+        clone_context = self._clone_context(voice)
         request = EngineRequest(
             text=text,
             voice=voice,
@@ -441,6 +524,7 @@ class TTSService:
             is_phonemes=is_phonemes,
             phonetic_preprocess=phonetic_preprocess,
             custom_lexicon=custom_lexicon,
+            clone_embedding=clone_context.embedding if clone_context else None,
         )
         use_cache = self._cache.enabled and cache is not False
 
@@ -449,10 +533,27 @@ class TTSService:
         candidates = self._router.candidates(
             engine=engine, voice=voice, fallback=fallback, style=self._requested_style(merged)
         )
+        if clone_context is not None:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if str(candidate.id) == clone_context.engine
+            ]
+            if not candidates:
+                raise CloningUnavailableError(
+                    f"Voice '{voice}' is a clone of engine '{clone_context.engine}', which "
+                    "is not registered in this deployment. A clone never falls back to "
+                    "another engine."
+                )
         for target in candidates:
-            target_request, voice_notes, voice_substituted = self._prepare_request(
-                target, request
-            )
+            if clone_context is not None:
+                # No substitution: rendering a clone in another voice would be a
+                # different person speaking.
+                target_request, voice_notes, voice_substituted = request, [], False
+            else:
+                target_request, voice_notes, voice_substituted = self._prepare_request(
+                    target, request
+                )
             plan = self._plan_for_engine(target, merged)
             if voice_substituted:
                 plan = plan.model_copy(
@@ -462,6 +563,10 @@ class TTSService:
             if use_cache and key is not None:
                 entry = await self._cache.get(key)
                 if entry is not None:
+                    self._require_clone_still_active(clone_context)
+                    manifest = self._record_clone_manifest(
+                        clone_context, entry.audio, text
+                    )
                     return SynthesisOutcome(
                         audio=entry.audio,
                         duration=entry.duration,
@@ -472,6 +577,7 @@ class TTSService:
                         cache_tier=entry.tier,
                         cache_key=key,
                         engine=target.id,
+                        manifest=manifest,
                     )
 
             # Take the engine's concurrency slot *before* the readiness check.
@@ -503,7 +609,14 @@ class TTSService:
                 ),
                 warnings=[*fallback_notes, *voice_notes, *result.warnings],
             )
-            if use_cache and key is not None:
+            self._require_clone_still_active(clone_context)
+            manifest = self._record_clone_manifest(clone_context, result.audio, text)
+            # A degraded render is never cached.  Caching a fallback made retries
+            # serve the substitute engine's audio with ``x-cache: hit``, which hid
+            # the degradation and pinned it for the whole TTL (SPEECH-006 known
+            # issue).  A clone render must likewise never be a cached fallback.
+            degraded = bool(fallback_notes) or voice_substituted
+            if use_cache and key is not None and not degraded:
                 await self._cache.put(
                     key,
                     CacheEntry(
@@ -521,6 +634,7 @@ class TTSService:
                 cache_tier="none",
                 cache_key=key,
                 engine=result.engine,
+                manifest=manifest,
             )
 
         if unavailable is not None:
@@ -557,6 +671,14 @@ class TTSService:
         """
         if direction is None and speed is None:
             direction = default_direction(voice)
+        # Cloned voices are rendered as complete buffers and must not be streamed:
+        # the existing fallback would stream a *different* voice, which is exactly
+        # the substitution a clone must never allow.
+        if self._clone_context(voice) is not None:
+            raise CloneInactiveError(
+                f"Voice '{voice}' is a cloned reference voice; cloned voices render as "
+                "complete buffers. Use POST /api/tts/synthesize."
+            )
         merged = direction if direction is not None else _legacy_direction(speed)
         request = EngineRequest(
             text=text,
@@ -719,6 +841,7 @@ class TTSService:
         if direction is None and speed is None:
             direction = default_direction(voice)
         merged, _ = resolve_direction(speed, direction)
+        clone_context = self._clone_context(voice)
         request = EngineRequest(
             text=text,
             voice=voice,
@@ -726,6 +849,7 @@ class TTSService:
             is_phonemes=is_phonemes,
             phonetic_preprocess=phonetic_preprocess,
             custom_lexicon=custom_lexicon,
+            clone_embedding=clone_context.embedding if clone_context else None,
         )
 
         unavailable: EngineUnavailableError | None = None
@@ -733,10 +857,24 @@ class TTSService:
         candidates = self._router.candidates(
             engine=engine, voice=voice, fallback=fallback, style=self._requested_style(merged)
         )
+        if clone_context is not None:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if str(candidate.id) == clone_context.engine
+            ]
+            if not candidates:
+                raise CloningUnavailableError(
+                    f"Voice '{voice}' is a clone of engine '{clone_context.engine}', which "
+                    "is not registered in this deployment."
+                )
         for target in candidates:
-            target_request, voice_notes, voice_substituted = self._prepare_request(
-                target, request
-            )
+            if clone_context is not None:
+                target_request, voice_notes, voice_substituted = request, [], False
+            else:
+                target_request, voice_notes, voice_substituted = self._prepare_request(
+                    target, request
+                )
             try:
                 result = target.synthesize(target_request)
             except EngineUnavailableError as exc:
@@ -755,7 +893,9 @@ class TTSService:
                         "warnings": [*fallback_notes, *voice_notes, *result.warnings],
                     }
                 )
-            return result
+            self._require_clone_still_active(clone_context)
+            manifest = self._record_clone_manifest(clone_context, result.audio, text)
+            return result.model_copy(update={"manifest": manifest})
 
         if unavailable is not None:
             raise unavailable
@@ -784,6 +924,15 @@ class TTSService:
         """
         if direction is None and speed is None:
             direction = default_direction(voice)
+        # Same refusal as the async path. A clone rendered here would carry no
+        # embedding, so the engine would use whatever speaker conditioning is
+        # currently loaded — a different person under the clone's id, which is
+        # the substitution this ticket forbids.
+        if self._clone_context(voice) is not None:
+            raise CloneInactiveError(
+                f"Voice '{voice}' is a cloned reference voice; cloned voices render as "
+                "complete buffers. Use POST /api/tts/synthesize."
+            )
         request = EngineRequest(
             text=text,
             voice=voice,

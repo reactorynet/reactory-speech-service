@@ -79,6 +79,40 @@ def isolated_designed_voices(tmp_path, monkeypatch):
     clear_blend_cache()
 
 
+@pytest.fixture(autouse=True)
+def isolated_voice_cloning(tmp_path, monkeypatch):
+    """Keep clone state and key material out of the repository.
+
+    Every test gets its own store, its own Ed25519 key and reference key, and an
+    approver allowlist that is *present* so the happy path is exercised.  The
+    process-wide clone service is reset around each test: the voice-registry hooks
+    it installs would otherwise point at a store nobody is using any more.
+    """
+    import json
+
+    from app.services import clone_crypto, voice_cloning
+
+    key_dir = tmp_path / "clone-keys"
+    key_dir.mkdir(parents=True, exist_ok=True)
+    signing_path = key_dir / "clone_signing_key.pem"
+    reference_path = key_dir / "clone_reference.key"
+    signing_path.write_bytes(clone_crypto.generate_signing_key_pem())
+    reference_path.write_bytes(clone_crypto.generate_reference_key())
+    approvers_path = tmp_path / "clone_approvers.json"
+    approvers_path.write_text(
+        json.dumps({"clone_approvers": ["approver@example.com"]}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(settings, "clone_store_dir", str(tmp_path / "clones"))
+    monkeypatch.setattr(settings, "clone_signing_key_path", str(signing_path))
+    monkeypatch.setattr(settings, "clone_reference_key_path", str(reference_path))
+    monkeypatch.setattr(settings, "clone_approvers_path", str(approvers_path))
+    monkeypatch.setattr(settings, "clone_instance_id", "test-instance")
+    voice_cloning.reset_clone_service()
+    yield
+    voice_cloning.reset_clone_service()
+
+
 class _FakeEngineManager:
     """Minimal engine-status source so /health has a row to report in unit tests."""
 

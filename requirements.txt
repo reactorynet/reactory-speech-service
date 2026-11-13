@@ -9,6 +9,19 @@ python-multipart>=0.0.12
 websockets>=13.0
 pydub>=0.25.0
 
+# SPEECH-006 — reference-audio encryption (AES-256-GCM) and Ed25519 signatures
+# for consent records and provenance manifests. Pinned: this is key material
+# handling, so the library version is a deliberate decision, not a range.
+#
+# 50.0.2 rather than the 46.0.3 this started on: the dependency-review gate
+# reported 13 advisories against 46.0.3 (PYSEC-2026-2141/-35/-36/-3552/-3553/
+# -3554, GHSA-537c-gmf6-5ccf; highest fix version is 50.0.0). Shipping a
+# known-vulnerable crypto library in the feature whose entire point is
+# verifiable integrity would be self-defeating. The API surface this service
+# uses (AESGCM, Ed25519PrivateKey/PublicKey, serialization, InvalidSignature)
+# is unchanged across 46 -> 50.
+cryptography==50.0.2
+
 # Dev dependencies
 pytest>=8.0.0
 pytest-asyncio>=0.24.0

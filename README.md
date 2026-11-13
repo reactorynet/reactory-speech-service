@@ -71,12 +71,29 @@ Copy `.env.example` to `.env` and customize:
 | `SPEECH_CACHE_LRU_MAX_BYTES` | `16777216` | In-process LRU byte cap (16 MiB) |
 | `SPEECH_CACHE_LRU_MAX_ENTRY_BYTES` | `524288` | Entries larger than this go to disk only |
 | `SPEECH_CACHE_DISK_MAX_BYTES` | `536870912` | Disk tier byte cap (512 MiB) |
+| `CLONE_APPROVERS_PATH` | `data/clone_approvers.json` | **Deployed allowlist** of clone approvers. Never committed; absent/empty means cloning is unavailable. See [voice cloning](docs/voices/voice-cloning.md) |
+| `CLONE_SIGNING_KEY_PATH` | `data/keys/clone_signing_key.pem` | Ed25519 key for consent records and provenance manifests. Never generated at boot |
+| `CLONE_REFERENCE_KEY_PATH` | `data/keys/clone_reference.key` | 32-byte AES-256-GCM key for reference audio, separate from application data |
+| `CLONE_STORE_DIR` | `data/clones` | Consent records, encrypted embeddings, manifest registry and audit log |
+| `CLONE_INSTANCE_ID` | hostname | Instance identity carried inside every signature |
 
 ## API
 
 ### Health
 - `GET /health` — Service status, per-engine readiness and queue depth, plus cache counters
 - `GET /ready` — Readiness probe (200 only when models loaded) with the same per-engine detail
+
+### Voice cloning (consent-first, ADR-0003)
+
+Cloning is unavailable unless the deployment supplies an approver allowlist and
+its own signing/reference keys; it fails closed. Full guide:
+[`docs/voices/voice-cloning.md`](docs/voices/voice-cloning.md).
+
+- `POST /api/tts/voices/clone` — multipart reference clip + structured consent record
+- `GET /api/tts/voices/{id}/consent` — consent record and whether its instance signature verifies
+- `POST /api/tts/voices/{id}/takedown` — **internal-only** (behind the authorising gateway); immediate, no redeploy
+- `DELETE /api/tts/voices/{id}?requestedBy=...&reason=...` — removes audio, embedding and registry entry
+- `POST /api/tts/provenance/verify` / `GET /api/tts/provenance/{audioSha256}` — manifest lookup; a miss is `no record found`, never `not ours`
 
 The legacy `tts` / `stt` booleans and the `ready` key are unchanged. `engines.<id>` reports
 `ready`, `loaded`, `lifecycle`, `queue_depth`, `in_flight`, `max_concurrency` and

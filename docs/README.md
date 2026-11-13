@@ -34,6 +34,7 @@ speech service. It is the reference for every ticket raised against this reposit
 | [`measurements/chatterbox-cpu.md`](measurements/chatterbox-cpu.md) | Measured CPU throughput for the expressive engine — corrects the roadmap's original claim |
 | [`voices/kokoro-voice-catalogue.md`](voices/kokoro-voice-catalogue.md) | The 54 shipped voices and how to design new ones |
 | [`voices/designed-voices.md`](voices/designed-voices.md) | Blending rules, the four shipped presets, previews and persistence |
+| [`voices/voice-cloning.md`](voices/voice-cloning.md) | Consent-first cloning: deployment, retention, provenance and takedown |
 
 ## Tickets
 
@@ -47,7 +48,7 @@ reference is the immutable ticket key in the support system.
 | 2 | `SPEECH-003` | Voice design by style-vector blending + presets + previews | In progress | `REACTORY-302016408/20261110/1712540096` |
 | 3 | `SPEECH-004` | Non-blocking inference, per-engine concurrency, synthesis cache, engine lifecycle | Backlog | `REACTORY-302016408/20261110/3808700412` |
 | 4 | `SPEECH-005` | Expressive engine adapter (Chatterbox, MIT) for emotion and paralinguistic tags | Backlog | `REACTORY-302016408/20261110/4004237369` |
-| 5 | `SPEECH-006` | Consent-first voice cloning with watermarking and provenance | Blocked on policy | `REACTORY-302016408/20261110/166562983` |
+| 5 | `SPEECH-006` | Consent-first voice cloning with signed provenance (no production watermark) | In progress | `REACTORY-302016408/20261110/166562983` |
 | 6 | `SPEECH-007` | Evaluation harness, golden corpus and routing policy | Backlog | `REACTORY-302016408/20261110/1252552414` |
 | 7 | `SPEECH-008` | STT streaming, word timestamps, temp-file cleanup, model tiering | Backlog | `REACTORY-302016408/20261110/2269269873` |
 | 8 | `SPEECH-009` | Optional hosted premium adapter with cost guardrails | Deferred | `REACTORY-302016408/20261110/1925583329` |

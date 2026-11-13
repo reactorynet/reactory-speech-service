@@ -11,6 +11,7 @@ from app.routers import health, stt, tts
 from app.services.g2p_capability import g2p_capability
 from app.services.stt_service import STTService
 from app.services.tts_service import TTSService
+from app.services.voice_cloning import log_startup_status
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,10 @@ stt_service = STTService()
 async def lifespan(app: FastAPI):
     """Startup: load models, probe G2P support, start the reaper. Shutdown: cleanup."""
     logger.info("Starting Reactory Speech Service on :%d", settings.speech_service_port)
+    # SPEECH-006: say loudly whether cloning is usable. An operator who deploys
+    # without the approver allowlist otherwise discovers it from a 503 on the
+    # first clone request. This never blocks boot and never generates a key.
+    log_startup_status()
     await tts_service.initialize()
     await stt_service.initialize()
     await tts_service.engine_manager.start_reaper()

@@ -128,6 +128,13 @@ class TTSResponse(BaseModel):
         default="none",
         description="Which cache tier served the audio: 'lru', 'disk' or 'none'",
     )
+    provenance: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Signed provenance manifest, present only for cloned voices. Verification is a "
+            "registry lookup on audioSha256; absence of a record is never 'not ours'."
+        ),
+    )
 
 
 class STTRequest(BaseModel):
@@ -178,6 +185,35 @@ class VoiceInfo(BaseModel):
     attribution: str | None = Field(
         default=None,
         description="Attribution required by the engine licence (e.g. 'Chatterbox (Resemble AI)')",
+    )
+
+
+class CloneVoiceInfo(VoiceInfo):
+    """A cloned voice plus the governance facts a caller needs.
+
+    Deliberately a **separate** model rather than extra fields on :class:`VoiceInfo`:
+    the pack-voice payload is an existing contract, and adding nullable keys to it
+    would change every row in ``GET /voices``.  Clone fields appear only where a
+    clone is described.
+    """
+
+    clone: bool = Field(default=True, description="Whether this voice is a consent-gated clone")
+    active: bool = Field(default=True, description="Whether the clone may be synthesised now")
+    # ``_describe`` emits camelCase keys for the wire; without the alias Pydantic
+    # silently dropped the reason and the field was always null.
+    inactive_reason: str | None = Field(
+        default=None, alias="inactiveReason", description="Why an inactive clone is inert"
+    )
+    consent_id: str | None = Field(default=None, description="Signed consent record id")
+    created_at: str | None = Field(default=None, description="When the clone was created")
+    created_by: str | None = Field(default=None, description="Who created the clone")
+    approved_by: str | None = Field(default=None, description="Approver recorded on the consent")
+    scope: str | None = Field(
+        default=None, description="Recorded scope; NOT enforced by this service"
+    )
+    expires_at: str | None = Field(default=None, description="Consent expiry (ISO-8601)")
+    reference_retained: bool = Field(
+        default=False, description="Whether the reference clip was retained as an exception"
     )
 
 
@@ -308,6 +344,40 @@ class VoiceDesignDescriptor(BaseModel):
 class VoiceDeleteResponse(BaseModel):
     status: str
     id: str
+
+
+class CloneTakedownRequest(BaseModel):
+    """Body of ``POST /api/tts/voices/{id}/takedown``.
+
+    The service cannot model privilege (ADR-0003 #5): the caller is an
+    authorising gateway and this body is the assertion it passes through.  The
+    endpoint is internal-only and must not be exposed to untrusted callers.
+    """
+
+    requestedBy: str = Field(..., min_length=1, description="The assertion the service records")
+    reason: str = Field(..., min_length=1, description="Why the takedown was requested")
+
+
+class ConsentLookupResponse(BaseModel):
+    """A consent record plus what its signature does and does not prove."""
+
+    consentId: str | None = None
+    record: dict[str, Any]
+    signatureValid: bool
+    verifiedAgainstInstanceId: str | None = None
+    notice: str
+
+
+class ProvenanceLookupResponse(BaseModel):
+    """Outcome of a manifest registry lookup.
+
+    ``status`` is ``verified``, ``signature invalid``, ``verification
+    unavailable`` or ``no record found``.  It is never ``not ours``.
+    """
+
+    status: str
+    audioSha256: str
+    manifest: dict[str, Any] | None = None
 
 
 class EngineCapabilities(BaseModel):
@@ -455,6 +525,13 @@ class HealthResponse(BaseModel):
         description=(
             "Measured text-front-end (G2P) support: supported languages and the reason "
             "each unsupported language cannot be phonemised"
+        ),
+    )
+    cloning: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Consent-first cloning availability and why it is unavailable. Absent or "
+            "empty approver configuration means unavailable, never unrestricted."
         ),
     )
 

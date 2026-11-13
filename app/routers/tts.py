@@ -17,10 +17,13 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
+    File,
+    Form,
     HTTPException,
     Query,
     Request,
     Response,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -33,6 +36,9 @@ from app.engines.base import EngineUnavailableError
 from app.models.schemas import (
     BaseVoiceAliasRequest,
     CapabilitiesResponse,
+    CloneTakedownRequest,
+    CloneVoiceInfo,
+    ConsentLookupResponse,
     EngineCapabilities,
     ErrorResponse,
     LexiconEntryRequest,
@@ -40,6 +46,7 @@ from app.models.schemas import (
     LexiconListResponse,
     PhonemizeRequest,
     PhonemizeResponse,
+    ProvenanceLookupResponse,
     TTSRequest,
     TTSResponse,
     VoiceDeleteResponse,
@@ -57,6 +64,15 @@ from app.services.phonetic_converter import (
 from app.services.inference import InferenceExecutor
 from app.services.tts_service import ENGINE_ID, SAMPLE_RATE, SynthesisOutcome
 from app.services.voice_design import VoiceDesignService, default_direction
+from app.services.voice_cloning import (
+    ApproverNotAllowedError,
+    CloneInactiveError,
+    CloneNotFoundError,
+    CloneStoreError,
+    CloneValidationError,
+    CloningUnavailableError,
+    get_clone_service,
+)
 from app.services.voice_registry import filter_catalogue
 
 logger = logging.getLogger(__name__)
@@ -113,6 +129,23 @@ def _cache_headers(outcome: SynthesisOutcome) -> dict[str, str]:
     state, so clients can treat the header as a boolean.
     """
     return {"X-Cache": outcome.cache, "X-Cache-Tier": outcome.cache_tier}
+
+
+def _provenance_headers(outcome: SynthesisOutcome) -> dict[str, str]:
+    """Point at the signed manifest for a cloned render.
+
+    The manifest itself is emitted in the JSON body; the WAV response carries
+    only its id, which is the registry lookup key (``audioSha256``).  Nothing is
+    written into the audio: provenance is out of band by decision 4a.
+    """
+    if not outcome.manifest:
+        return {}
+    digest = str(outcome.manifest.get("audioSha256") or "")
+    return {
+        "X-Provenance-Id": digest,
+        "X-Provenance-Signed": "true",
+        "X-Provenance-Lookup": f"/api/tts/provenance/{digest}",
+    }
 
 
 def _direction_headers(plan: DirectionPlan) -> dict[str, str]:
@@ -210,6 +243,7 @@ async def _render(tts_service: Any, body: TTSRequest) -> SynthesisOutcome:
         cache_tier=outcome.cache_tier,
         cache_key=outcome.cache_key,
         engine=outcome.engine,
+        manifest=outcome.manifest,
     )
 
 
@@ -240,8 +274,16 @@ async def synthesize(request: Request, body: TTSRequest) -> Response:
                 **_audio_headers(outcome.duration),
                 **_direction_headers(outcome.plan),
                 **_cache_headers(outcome),
+                **_provenance_headers(outcome),
             },
         )
+    except CloneInactiveError as e:
+        # An inert clone is gone, not unknown: 410 tells the caller the record
+        # exists but may not be used (takedown or expired consent).
+        raise HTTPException(status_code=410, detail=str(e))
+    except CloningUnavailableError as e:
+        logger.warning("Cloned voice unavailable: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except EngineUnavailableError as e:
@@ -274,6 +316,7 @@ async def synthesize_json(
                 **_audio_headers(outcome.duration),
                 **_direction_headers(outcome.plan),
                 **_cache_headers(outcome),
+                **_provenance_headers(outcome),
             }
         )
         return TTSResponse(
@@ -287,7 +330,13 @@ async def synthesize_json(
             direction_warnings=outcome.plan.warnings,
             cache=outcome.cache,
             cache_tier=outcome.cache_tier,
+            provenance=outcome.manifest,
         )
+    except CloneInactiveError as e:
+        raise HTTPException(status_code=410, detail=str(e))
+    except CloningUnavailableError as e:
+        logger.warning("Cloned voice unavailable: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except EngineUnavailableError as e:
@@ -342,10 +391,32 @@ async def list_voices(
     )
 
 
-@router.get("/voices/{voice_id}", response_model=VoiceInfo)
-async def get_voice(voice_id: str, request: Request) -> VoiceInfo:
-    """Describe a single voice, or 404 when it is not present in the voice pack."""
+@router.get("/voices/{voice_id}", response_model=VoiceInfo | CloneVoiceInfo)
+async def get_voice(
+    voice_id: str, request: Request
+) -> VoiceInfo | CloneVoiceInfo:
+    """Describe a single voice, or 404 when it is not present in the voice pack.
+
+    A clone carries its engine, licence, consent id, creator, approver, recorded
+    scope and expiry.  A disabled or expired clone is **410**, not 404: the
+    record exists, but synthesising it is refused.
+    """
     tts_service = request.app.state.tts_service
+    # Clones are resolved through the clone store first: `get_voice` on the
+    # service also knows them, but only the store can say whether the clone is
+    # active, and a known-but-inert clone must be 410 rather than 200.
+    clone = get_clone_service().describe(voice_id)
+    if clone is not None:
+        if not clone.get("active", False):
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    f"Voice '{voice_id}' is not active: "
+                    f"{clone.get('inactiveReason') or 'it cannot be synthesised'}"
+                ),
+            )
+        return CloneVoiceInfo(**clone)
+
     voice = tts_service.get_voice(voice_id)
     if voice is None:
         raise HTTPException(
@@ -563,8 +634,38 @@ async def designed_voice_preview(voice_id: str, request: Request) -> Response:
         409: {"model": ErrorResponse},
     },
 )
-async def delete_voice(voice_id: str, request: Request) -> VoiceDeleteResponse:
-    """Delete a designed voice. Pack voices and shipped presets are immutable (409)."""
+async def delete_voice(
+    voice_id: str,
+    request: Request,
+    requested_by: str | None = Query(None, alias="requestedBy"),
+    reason: str | None = Query(None),
+) -> VoiceDeleteResponse:
+    """Delete a designed voice, or a clone.
+
+    Deleting a **clone** removes its audio, embedding, registry entry and any
+    preview, and records who asked, when and why.  It succeeds when a file is
+    already missing — a corrupt or absent clip must not block removal of the
+    reference to it.  The audit entry contains no audio and no hash of it.
+
+    Pack voices and shipped presets remain immutable (409).
+    """
+    clone_service = get_clone_service()
+    if clone_service.describe(voice_id) is not None:
+        try:
+            result = clone_service.delete(
+                voice_id, requested_by=requested_by or "", reason=reason or ""
+            )
+        except CloneNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Unknown clone '{voice_id}'.")
+        except CloneValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except CloneStoreError as exc:
+            # No request-derived value in the log line (py/log-injection); the
+            # id is in the response and in the clone audit log.
+            logger.exception("Could not delete a clone.")
+            raise HTTPException(status_code=500, detail=str(exc))
+        return VoiceDeleteResponse(status=result["status"], id=result["id"])
+
     service = VoiceDesignService(request.app.state.tts_service)
     try:
         service.delete(voice_id)
@@ -579,6 +680,201 @@ async def delete_voice(voice_id: str, request: Request) -> VoiceDeleteResponse:
             ),
         )
     return VoiceDeleteResponse(status="deleted", id=voice_id)
+
+
+# ─────────────────────────────────────────────────────────────
+# Consent-first voice cloning (SPEECH-006 / ADR-0003)
+#
+# Cloning is a governance feature, not a model feature. The clone itself is one
+# library call; the consent record, retention rule, provenance chain and
+# takedown path are the product.
+# ─────────────────────────────────────────────────────────────
+
+#: Reference uploads are a short clip, not an archive. Bounded to keep a single
+#: request from filling the node's disk.
+MAX_REFERENCE_BYTES = 25 * 1024 * 1024
+
+
+def _parse_consent(raw: str | None) -> dict[str, Any]:
+    if raw is None or not raw.strip():
+        # Empty is not a malformed object: let the service name every missing
+        # field individually rather than inventing one generic error here.
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"consent must be a JSON object: {exc}"
+        )
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="consent must be a JSON object")
+    return payload
+
+
+@router.post(
+    "/voices/clone",
+    response_model=CloneVoiceInfo,
+    status_code=201,
+    responses={
+        403: {"model": ErrorResponse},
+        413: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+async def create_voice_clone(
+    request: Request,
+    reference_audio: UploadFile = File(..., description="Short reference clip (WAV)"),
+    consent: str | None = Form(
+        None,
+        description=(
+            "JSON object with subjectName, purpose, capturedAt, expiresAt, approver, "
+            "evidence and scope. Missing fields are reported individually."
+        ),
+    ),
+    created_by: str = Form("unspecified", description="Who is creating the clone"),
+    retain_reference: bool = Form(
+        False, description="Retain the clip as a recorded exception (<= 90 days)"
+    ),
+    retention_reason: str | None = Form(None),
+    retention_days: int | None = Form(None),
+) -> CloneVoiceInfo:
+    """Create a consent-first voice clone from a reference clip.
+
+    The reference clip is deleted as soon as the embedding is extracted unless
+    retention is explicitly requested.  Retention is capped at 90 days and needs
+    a reason on the consent record.
+
+    Refusals: 422 for a missing/invalid field or an out-of-enumeration scope,
+    403 for an approver outside the deployed allowlist, 503 when cloning is not
+    configured on this instance (absent allowlist or keys).
+    """
+    audio = await reference_audio.read()
+    if len(audio) > MAX_REFERENCE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"reference_audio is larger than {MAX_REFERENCE_BYTES} bytes",
+        )
+    service = get_clone_service()
+    try:
+        descriptor = service.create(
+            audio,
+            _parse_consent(consent),
+            created_by=created_by,
+            retain_reference=retain_reference,
+            retention_reason=retention_reason,
+            retention_days=retention_days,
+        )
+    except ApproverNotAllowedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except CloneValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except CloningUnavailableError as exc:
+        logger.warning("Clone creation refused: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except CloneStoreError as exc:
+        logger.exception("Clone creation failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+    return CloneVoiceInfo(**descriptor)
+
+
+@router.post(
+    "/voices/{voice_id}/takedown",
+    response_model=CloneVoiceInfo,
+    responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+async def takedown_voice(
+    voice_id: str, body: CloneTakedownRequest, request: Request
+) -> CloneVoiceInfo:
+    """Disable a clone and remove its artefacts, effective immediately.
+
+    **Internal-only.** This endpoint must sit behind the authorising gateway; it
+    is not for untrusted callers. The service cannot model privilege
+    (ADR-0003 #5), so it records the assertion it is given (who, when, why) and
+    does not verify the authority behind it. Once applied the clone is inert
+    without a redeploy: 410 on synthesis, absent from ``/voices``, and an
+    in-flight render is discarded.
+    """
+    try:
+        descriptor = get_clone_service().takedown(
+            voice_id, requested_by=body.requestedBy, reason=body.reason
+        )
+    except CloneNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except CloneValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return CloneVoiceInfo(**descriptor)
+
+
+@router.get(
+    "/voices/{voice_id}/consent",
+    response_model=ConsentLookupResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def clone_consent(voice_id: str) -> ConsentLookupResponse:
+    """Return a clone's consent record and whether its instance signature verifies.
+
+    The signature is chain of custody: it proves which instance recorded the
+    consent and that it is unaltered.  It does **not** prove the subject
+    consented; the response says so in ``notice``.
+    """
+    result = get_clone_service().consent_record(voice_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail=f"No consent record for clone '{voice_id}'."
+        )
+    record = result["record"]
+    return ConsentLookupResponse(
+        consentId=record.get("consentId"),
+        record=record,
+        signatureValid=result["signatureValid"],
+        verifiedAgainstInstanceId=result["verifiedAgainstInstanceId"],
+        notice=result["notice"],
+    )
+
+
+@router.post(
+    "/provenance/verify",
+    response_model=ProvenanceLookupResponse,
+    responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+async def verify_provenance(
+    file: UploadFile = File(..., description="The audio file to look up")
+) -> JSONResponse:
+    """Look up a file's signed manifest by hashing its **decoded PCM**.
+
+    A miss returns 404 with the status ``no record found``.  It never says the
+    file is foreign: absence of a record is not evidence of absence.
+    """
+    audio = await file.read()
+    if len(audio) > MAX_REFERENCE_BYTES:
+        # The lookup decodes the whole file into memory; cap it like an upload.
+        raise HTTPException(
+            status_code=413,
+            detail=f"file is larger than {MAX_REFERENCE_BYTES} bytes",
+        )
+    try:
+        result = get_clone_service().lookup_provenance(audio)
+    except (ValueError, RuntimeError, OSError) as exc:
+        # Only decode failures are the caller's fault. An internal error must not
+        # be reported as "your file was undecodable".
+        raise HTTPException(
+            status_code=422, detail=f"The file could not be decoded as audio: {exc}"
+        )
+    status_code = 404 if result["manifest"] is None else 200
+    return JSONResponse(status_code=status_code, content=result)
+
+
+@router.get(
+    "/provenance/{audio_sha256}",
+    response_model=ProvenanceLookupResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def lookup_provenance(audio_sha256: str) -> JSONResponse:
+    """Look up a manifest by ``audioSha256`` (the registry key)."""
+    result = get_clone_service().lookup_by_digest(audio_sha256.strip().lower())
+    status_code = 404 if result["manifest"] is None else 200
+    return JSONResponse(status_code=status_code, content=result)
 
 
 @router.post(

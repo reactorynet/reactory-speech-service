@@ -22,6 +22,29 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "auto"
 
     # STT — Phase 7 (SPEECH-008). Model tiering, VAD and streaming tuning.
+    # TTS — Phase 5 (SPEECH-006): consent-first voice cloning (ADR-0003).
+    #
+    # Cloning is off unless the deployment supplies all of the following.  These
+    # files are per-instance configuration and MUST NOT be committed:
+    #
+    # * ``clone_approvers.json`` — ``{"clone_approvers": ["<email>", ...]}``.
+    #   Absent or empty means cloning is UNAVAILABLE, never unrestricted.
+    # * ``clone_signing_key_path`` — an Ed25519 private key (PEM).  It signs
+    #   consent records and provenance manifests.  It is never generated at boot:
+    #   a regenerated key would invalidate every existing signature.
+    # * ``clone_reference_key_path`` — 32 bytes for AES-256-GCM, deliberately a
+    #   different file from ordinary application data.
+    #
+    # The store holds consent records, encrypted embeddings, the durable
+    # provenance manifest registry and the audit log.
+    clone_store_dir: str = "data/clones"
+    clone_approvers_path: str = "data/clone_approvers.json"
+    clone_signing_key_path: str = "data/keys/clone_signing_key.pem"
+    clone_reference_key_path: str = "data/keys/clone_reference.key"
+    #: Stable identity of this deployment, carried inside every signature.  Empty
+    #: falls back to the hostname, which is stable for a container per instance.
+    clone_instance_id: str = ""
+
     # Models are discovered from directories under ``models_dir`` that contain a
     # ``model.bin``; the ``whisper_model_size`` above selects the one loaded at boot.
     whisper_word_timestamps: bool = False

@@ -53,3 +53,15 @@ data/previews/
 # Chatterbox weights (optional expressive engine; downloaded on demand, never committed)
 models/chatterbox/
 models/**/*.safetensors
+
+# SPEECH-006 — consent-first voice cloning (ADR-0003).
+# The approver allowlist is deployed per instance and MUST NOT be committed: it
+# names the people allowed to approve a clone, so a committed copy would be both
+# public and stale. Absent/empty makes cloning unavailable (fail closed).
+data/clone_approvers.json
+# Instance signing key and reference-audio encryption key. Separate files on
+# purpose: a database/backup compromise must not also expose voice clips.
+data/keys/
+# Consent records, encrypted embeddings, the provenance manifest registry and
+# the audit log are runtime data, not source.
+data/clones/

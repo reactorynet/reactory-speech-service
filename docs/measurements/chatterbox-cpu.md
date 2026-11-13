@@ -271,15 +271,20 @@ Near-zero waveform correlation between settings is the point: this is a differen
 gain or filter applied to one rendering.
 
 The adapter maps `style: "neutral"` to `exaggeration=0.5` and `style: "empathetic"` to
-`exaggeration=0.62` (see `STYLE_EXAGGERATION`). 0.62 sits between the measured 0.5 and 1.0 points,
-so the measured slope bounds the expected effect:
+`exaggeration=0.44` (see `STYLE_EXAGGERATION`). The 0.62 mapping this page originally discussed was
+lowered after a round-trip measurement: our own STT heard **"I've been"** for **"Hi Vin"** at 0.62,
+while 0.44 rendered **"Hi, Vin"** correctly. Short words and proper nouns degrade first, and a clone
+inheriting the old default would mangle the names of the person whose voice it reuses.
 
+0.44 sits below the measured 0.5 point, so the useful bound is the 0.0 → 0.5 slope:
+
+- **0.5 → 0.44** (12% of that interval, reversed): duration ≈ +1.7%, RMS ≈ −0.3%
 - **0.5 → 1.0:** duration −17.6%, RMS +18.6%
-- **0.5 → 0.62** (24% of that interval): **duration ≈ −4.2% (≈ −0.37 s on this sentence), RMS ≈ +4.5%**
 - **0.0 → 0.5:** duration −14.0%, RMS +2.6% — the whole scale moves pace, which is why
   `prosody.rate` is never stacked on top of it.
 
-The exact 0.62 render has **not** been produced on this host: it is an Intel macOS machine and
+The real render has **not** been produced on this host: it is an Intel macOS machine and
 PyTorch publishes no macOS x86_64 wheel for 2.6.0, so the real backend cannot be installed here.
-The `slow` test `test_empathetic_audibly_differs_from_neutral_on_cpu` renders 0.5 and 0.62 through
-the real model and asserts a duration/RMS delta when weights are mounted; it skips otherwise.
+The `slow` test `test_empathetic_audibly_differs_from_neutral_on_cpu` renders 0.5 and the mapped
+empathetic value through the real model and asserts a duration/RMS delta when weights are mounted;
+it skips otherwise.

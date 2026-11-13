@@ -463,11 +463,73 @@ UNGRADED_VOICE_IDS: tuple[str, ...] = tuple(
 #: imports the store still resolves pack voices correctly.
 _record_lookup: Callable[[str], "VoiceRecord | None"] | None = None
 
+#: Hooks through which the clone store contributes ``reference`` voices.
+#:
+#: Deliberately three separate slots rather than an open-ended provider list: a
+#: reset test replaces one service and must not accumulate stale providers that
+#: keep answering for a store nobody is using any more.
+_reference_provider: Callable[[str], list["VoiceRecord"]] | None = None
+_reference_lookup: Callable[[str], "VoiceRecord | None"] | None = None
+_reference_authorizer: Callable[[str], bool] | None = None
+
 
 def set_record_lookup(lookup: Callable[[str], "VoiceRecord | None"] | None) -> None:
     """Register (or clear) the designed-voice lookup used by :func:`get_record`."""
     global _record_lookup
     _record_lookup = lookup
+
+
+def set_reference_provider(
+    provider: Callable[[str], list["VoiceRecord"]] | None,
+) -> None:
+    """Register the clone store's per-engine listing of **active** clones."""
+    global _reference_provider
+    _reference_provider = provider
+
+
+def set_reference_lookup(lookup: Callable[[str], "VoiceRecord | None"] | None) -> None:
+    """Register the clone store's single-id lookup of **active** clones."""
+    global _reference_lookup
+    _reference_lookup = lookup
+
+
+def set_reference_authorizer(authorizer: Callable[[str], bool] | None) -> None:
+    """Register the clone store's request-time activity check.
+
+    The Chatterbox adapter calls it before rendering a ``reference`` voice.  With
+    no authorizer registered the default is **inactive**, so a reference voice can
+    never be rendered by a process that does not have the clone store.
+    """
+    global _reference_authorizer
+    _reference_authorizer = authorizer
+
+
+def reference_records(engine: str) -> list["VoiceRecord"]:
+    """Active reference (cloned) records for one engine.  Never raises."""
+    provider = _reference_provider
+    if provider is None:
+        return []
+    try:
+        return list(provider(engine))
+    except Exception:  # pragma: no cover - a broken clone store must not hide pack voices
+        logger.warning(
+            "Clone store listing failed for engine %r; continuing without clones.",
+            engine,
+            exc_info=True,
+        )
+        return []
+
+
+def reference_voice_is_active(voice_id: str) -> bool:
+    """Whether the clone store considers ``voice_id`` active.  Default: False."""
+    authorizer = _reference_authorizer
+    if authorizer is None:
+        return False
+    try:
+        return bool(authorizer(voice_id))
+    except Exception:  # pragma: no cover - fail closed
+        logger.warning("Clone activity check failed; treating the voice as inactive.")
+        return False
 
 
 def get_record(voice_id: str) -> VoiceRecord | None:
@@ -483,14 +545,28 @@ def get_record(voice_id: str) -> VoiceRecord | None:
     if record is not None:
         return record
     lookup = _record_lookup
-    if lookup is None:
+    if lookup is not None:
+        try:
+            record = lookup(voice_id)
+        except Exception:  # pragma: no cover - defensive: never break pack voices
+            # The id comes straight off a request path. Logging it would let a
+            # crafted id write a line into the log, so the message is constant and
+            # the id is left to the caller's own audit trail.
+            logger.warning(
+                "Designed-voice registry lookup failed; treating the voice as unknown.",
+                exc_info=True,
+            )
+            record = None
+        if record is not None:
+            return record
+    reference_lookup = _reference_lookup
+    if reference_lookup is None:
         return None
     try:
-        return lookup(voice_id)
+        return reference_lookup(voice_id)
     except Exception:  # pragma: no cover - defensive: never break pack voices
         logger.warning(
-            "Designed-voice registry lookup failed for %r; treating it as unknown.",
-            voice_id,
+            "Clone registry lookup failed; treating the voice as unknown.",
             exc_info=True,
         )
         return None
@@ -582,9 +658,10 @@ def build_catalogue(
     for voice_id in voice_ids:
         descriptor = describe_voice(voice_id, engine=engine)
         if descriptor is None:
+            # The id is caller-supplied; a constant message keeps it out of the log
+            # while the descriptor below still carries it to the caller.
             logger.warning(
-                "Voice id %r is not in the voice registry; exposing it with default metadata.",
-                voice_id,
+                "A voice id is not in the voice registry; exposing it with default metadata."
             )
             descriptor = VoiceDescriptor(
                 id=voice_id,
