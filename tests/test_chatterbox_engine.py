@@ -44,6 +44,7 @@ from app.engines.chatterbox import (
     VARIANT_REPOS,
     VARIANT_SUPPORTS_EXAGGERATION,
     STYLE_EXAGGERATION,
+    CONDS_EMBEDDING_MAGIC,
     ChatterboxCloneBackend,
     ChatterboxDependencyError,
     ChatterboxEngine,
@@ -2491,24 +2492,80 @@ def test_capabilities_flag_off_payload_is_unchanged(tmp_path, monkeypatch):
 
 
 class _Speaker:
-    """A speaker conditioning value, identified by the level it renders at."""
+    """A speaker conditioning value, identified by the level it renders at.
+
+    ``save`` / ``load`` mirror chatterbox-tts ``Conditionals``: the container
+    writes plain data (upstream: a dict of tensors via ``torch.save``) and its
+    own classmethod rebuilds it (upstream: ``torch.load(weights_only=True)``).
+    No class reference is written, so nothing needs unrestricted unpickling.
+    """
 
     def __init__(self, name: str, level: float) -> None:
         self.name = name
         self.level = level
 
+    def save(self, fpath) -> None:
+        fpath.write(json.dumps({"name": self.name, "level": self.level}).encode("utf-8"))
+
+    @classmethod
+    def load(cls, fpath, map_location="cpu") -> "_Speaker":
+        payload = json.loads(fpath.read().decode("utf-8"))
+        return cls(payload["name"], payload["level"])
+
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
         return f"_Speaker({self.name!r}, {self.level})"
 
 
+class _RestrictedUnpickler(pickle.Unpickler):
+    """``torch.load(weights_only=True)`` in miniature: only allow-listed classes."""
+
+    def __init__(self, buffer, allowed: set[type]) -> None:
+        super().__init__(buffer)
+        self._allowed = {(cls.__module__, cls.__qualname__): cls for cls in allowed}
+
+    def find_class(self, module, name):
+        if (module, name) in self._allowed:
+            return self._allowed[(module, name)]
+        raise pickle.UnpicklingError(f"weights_only load refused global {module}.{name}")
+
+
+class _FakeSerialization:
+    def __init__(self) -> None:
+        self.allowed: set[type] = set()
+
+    def safe_globals(self, classes):
+        serialization = self
+
+        class _Guard:
+            def __enter__(self_inner):
+                serialization.allowed = set(classes)
+
+            def __exit__(self_inner, *exc):
+                serialization.allowed = set()
+                return False
+
+        return _Guard()
+
+
 class _FakeTorch:
-    """The only two torch calls the clone backend makes, with pickle underneath."""
+    """The torch calls the clone backend makes, with weights_only semantics.
+
+    ``load`` refuses anything but ``weights_only=True`` and, like torch, only
+    reconstructs classes allow-listed through ``serialization.safe_globals``.
+    """
+
+    def __init__(self) -> None:
+        self.serialization = _FakeSerialization()
+        self.weights_only_calls: list[object] = []
 
     def save(self, payload, buffer) -> None:
         pickle.dump(payload, buffer)
 
     def load(self, buffer, map_location=None, weights_only=None):
-        return pickle.load(buffer)
+        self.weights_only_calls.append(weights_only)
+        if weights_only is not True:
+            raise AssertionError("the clone backend asked for unrestricted unpickling")
+        return _RestrictedUnpickler(buffer, self.serialization.allowed).load()
 
 
 class CondsAwareChatterbox:
@@ -2560,9 +2617,12 @@ def _conds_engine(tmp_path) -> ChatterboxEngine:
     return engine
 
 
+_FAKE_TORCH = _FakeTorch()
+
+
 def _fake_torch() -> _FakeTorch:
     """The torch stand-in, as a named function so it can be patched in by name."""
-    return _FakeTorch()
+    return _FAKE_TORCH
 
 
 def _plain_torch(monkeypatch) -> None:
@@ -2742,3 +2802,88 @@ def test_a_pack_voice_render_concurrent_with_a_clone_render_is_not_contaminated(
     )
     assert _first_sample(results["clone"].audio) == pytest.approx(0.40, abs=5e-3)
     assert model.conds.name == "pack-default"
+
+# ---------------------------------------------------------------------------
+# Embeddings are never unpickled with weights_only=False (review follow-up)
+# ---------------------------------------------------------------------------
+
+_PWNED: list[str] = []
+
+
+def _record_pwned(marker: str) -> str:
+    _PWNED.append(marker)
+    return marker
+
+
+class _Exploit:
+    """A pickle payload that runs code on load, as a tampered embedding would."""
+
+    def __reduce__(self):
+        return (_record_pwned, ("code ran during embedding load",))
+
+
+def test_a_clone_embedding_is_the_containers_own_save_not_a_pickle(tmp_path, monkeypatch):
+    _plain_torch(monkeypatch)
+    engine = _conds_engine(tmp_path)
+    backend = ChatterboxCloneBackend(engine)
+
+    embedding = backend.extract_embedding(_reference_wav(0.20))
+
+    assert embedding.startswith(CONDS_EMBEDDING_MAGIC)
+    # No class reference is serialised: loading it needs no unpickler at all.
+    assert b"_Speaker" not in embedding
+    assert b"test_chatterbox_engine" not in embedding
+
+
+def test_a_tampered_legacy_embedding_cannot_execute_code(tmp_path, monkeypatch):
+    """A pickled payload is refused by the weights_only load, never retried."""
+    _plain_torch(monkeypatch)
+    _FAKE_TORCH.weights_only_calls.clear()
+    _PWNED.clear()
+    engine = _conds_engine(tmp_path)
+    voice_id = _enable_reference_voice()
+    hostile = pickle.dumps(_Exploit())
+
+    with pytest.raises(ChatterboxError, match="legacy pickle format"):
+        engine.synthesize(EngineRequest(text="Hi.", voice=voice_id, clone_embedding=hostile))
+
+    assert _PWNED == [], "a crafted embedding executed code"
+    assert _FAKE_TORCH.weights_only_calls == [True]
+    assert engine.model.conds.name == "pack-default", "a failed load leaked conditioning"
+
+
+def test_a_legacy_embedding_still_loads_through_the_allow_listed_container(
+    tmp_path, monkeypatch
+):
+    """Clones created by the first SPEECH-006 release keep working, safely."""
+    _plain_torch(monkeypatch)
+    _FAKE_TORCH.weights_only_calls.clear()
+    engine = _conds_engine(tmp_path)
+    voice_id = _enable_reference_voice()
+    legacy = pickle.dumps(_Speaker("legacy-subject", 0.33))
+
+    result = engine.synthesize(
+        EngineRequest(text="Hi.", voice=voice_id, clone_embedding=legacy)
+    )
+
+    samples, _rate = sf.read(io.BytesIO(result.audio), dtype="float32")
+    assert abs(float(samples.mean()) - 0.33) < 0.01
+    assert _FAKE_TORCH.weights_only_calls == [True]
+    assert engine.model.conds.name == "pack-default"
+
+
+def test_resolving_a_named_voice_does_not_list_every_clone(tmp_path, monkeypatch):
+    """resolve_voice(name) is a single-id lookup, not an O(clones) listing."""
+    engine = _conds_engine(tmp_path)
+    _enable_reference_voice()
+    listings: list[str] = []
+    monkeypatch.setattr(
+        voice_registry,
+        "_reference_provider",
+        lambda engine_id: listings.append(engine_id) or [],
+    )
+
+    engine.resolve_voice(CHATTERBOX_STANDARD)
+    engine.resolve_voice(CLONE_TEST_VOICE)
+
+    assert listings == []

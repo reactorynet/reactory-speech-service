@@ -472,18 +472,33 @@ class SynthesisCache:
     # Store
     # ------------------------------------------------------------------
 
-    async def put(self, key: str, entry: CacheEntry) -> None:
-        """Store a render in both tiers (the LRU may reject large entries)."""
+    async def put(self, key: str, entry: CacheEntry, *, persist: bool = True) -> None:
+        """Store a render in both tiers (the LRU may reject large entries).
+
+        ``persist=False`` keeps the render in the in-memory tier only.  Used for
+        renders that must not exist at rest once their source is withdrawn
+        (cloned voices): the memory tier is evictable by key and empties on
+        restart, the disk tier is neither.
+        """
         if not self.enabled:
             return
-        await asyncio.to_thread(self._store, key, entry)
+        await asyncio.to_thread(self._store, key, entry, persist)
 
-    def put_sync(self, key: str, entry: CacheEntry) -> None:
+    def put_sync(self, key: str, entry: CacheEntry, *, persist: bool = True) -> None:
         if not self.enabled:
             return
-        self._store(key, entry)
+        self._store(key, entry, persist)
 
-    def _store(self, key: str, entry: CacheEntry) -> None:
+    def discard(self, key: str) -> None:
+        """Remove one key from both tiers.  Missing entries are not an error."""
+        with self._lock:
+            self.lru.pop(key)
+            self.stats.lru_entries = len(self.lru.entries)
+            self.stats.lru_bytes = self.lru.total_bytes
+        if self.disk_enabled:
+            self._discard(*self._paths(key))
+
+    def _store(self, key: str, entry: CacheEntry, persist: bool = True) -> None:
         stored = CacheEntry(
             audio=entry.audio,
             duration=entry.duration,
@@ -499,7 +514,7 @@ class SynthesisCache:
             self.stats.writes += 1
             self.stats.lru_entries = len(self.lru.entries)
             self.stats.lru_bytes = self.lru.total_bytes
-        if self.disk_enabled:
+        if persist and self.disk_enabled:
             self._disk_put(key, stored)
 
     # ------------------------------------------------------------------
