@@ -21,7 +21,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -43,7 +43,7 @@ jobs:
     name: speech-expressive requirements resolve
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 3.13, not 3.11: chatterbox-tts caps numpy<2.0.0 below 3.13 while
       # kokoro-onnx requires numpy>=2.0.2, so the two are unsatisfiable together
@@ -79,7 +79,7 @@ jobs:
     name: speech-core image size
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The ceiling is documented in docs/architecture/speech-platform.md and
       # enforced by the script; the step fails the build when it is exceeded.
