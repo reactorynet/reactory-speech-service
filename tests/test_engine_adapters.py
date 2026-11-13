@@ -108,8 +108,13 @@ def test_registry_file_is_the_source_and_loads():
     assert DEFAULT_REGISTRY_PATH.is_file()
     assert registry.schema_version >= 1
     assert registry.default_voice in registry.voices
-    assert len(registry.voices) == 54
-    assert set(registry.voices) == set(SHIPPED_VOICE_IDS)
+    # The Kokoro pack is 54 voices.  The optional expressive engine adds two
+    # registry entries (standard/turbo) in the same file, but they are not pack
+    # voices: SHIPPED_VOICE_IDS is deliberately scoped to the Kokoro engine so
+    # every catalogue-size assertion keeps its meaning with the flag off.
+    assert len(voice_registry.VOICE_REGISTRY.ids(engine="kokoro")) == 54
+    assert len(voice_registry.VOICE_REGISTRY.ids(engine="chatterbox")) == 2
+    assert set(SHIPPED_VOICE_IDS) <= set(registry.voices)
 
 
 def test_every_registry_record_carries_the_required_fields():

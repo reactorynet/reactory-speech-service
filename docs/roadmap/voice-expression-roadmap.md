@@ -162,6 +162,20 @@ voices. Orpheus (Apache-2.0) is the higher-quality GPU option and is deferred to
 > chatterbox-tts 0.1.7, and the shared 1 GB S3Gen vocoder means no variant is a small download.
 > Details and numbers: [`../measurements/chatterbox-cpu.md`](../measurements/chatterbox-cpu.md).
 
+**Product deviation — needs owner acknowledgement.** The ticket specified "Chatterbox Nano (110M),
+CPU, ~3× realtime" as the edge target. Measurement removed all three premises: `chatterbox-tts`
+0.1.7 exposes **no Nano class**, both released variants are **slower** than realtime on CPU
+(**RTF 0.13**), and there is therefore **no CPU tier that suits interactive turn-taking**. The
+accepted consequence of this deviation is that *CPU expressive TTS is batch-only*. This is recorded
+here rather than substituted silently in code; if a future release exposes a Nano class, re-evaluate
+this phase against it.
+
+**Variant caveat.** `ChatterboxTurboTTS.generate` accepts `exaggeration` and ignores it
+(`hp.emotion_adv = False`), so **only `standard` renders tone**. The adapter therefore advertises
+`styles: ["neutral"]` for turbo and reports a requested style in `direction_ignored`. Turbo is also
+**unmeasured**: the RTF figures above are `ChatterboxTTS` only, and its compute-cost advisory
+deliberately reuses the conservative standard figures.
+
 **Scope**
 
 - New `app/engines/chatterbox.py` adapter behind the existing contract.
@@ -176,6 +190,17 @@ voices. Orpheus (Apache-2.0) is the higher-quality GPU option and is deferred to
   values degrade diction seriously enough that our own STT mis-hears brand names.
 - Declare a **compute-cost advisory** in `/capabilities`, because at RTF 0.13 the routing signal is
   cost-per-second, not `native_rate`.
+- Declare the expressive styles **per variant**, not from the backend signature: a variant that
+  accepts a control and ignores it must report the control as ignored.
+- Download only the files `from_local` reads (`allow_patterns`), record the licence and a SHA-256
+  per file, and never fetch weights at image build time. Refresh the pinned upstream file layout
+  (`tests/data/chatterbox-upstream.json`) together with any upstream change.
+- Translate or report this service's own markup/controls that the engine cannot consume
+  (`[word|pronunciation]`, `<phoneme>`, `custom_lexicon`, `phonetic_preprocess`).
+- Refuse a manifest whose variant differs from the deployed one, and require a SHA-256 for every
+  required file, so the two variants cannot share a models directory unsafely.
+- Fail fast: preflight the optional engine before evicting a healthy one, and back off between
+  failed load attempts instead of re-hashing and re-constructing on every request.
 
 **Acceptance criteria**
 
@@ -189,6 +214,9 @@ voices. Orpheus (Apache-2.0) is the higher-quality GPU option and is deferred to
 - `/capabilities` reports the expressive engine only when its profile is deployed.
 - A missing model degrades to Kokoro with a clear `ignored` entry, not a 500.
 - Licence and attribution metadata for the engine is present in the registry.
+- On `turbo`, a requested style is reported in `ignored` and never in `applied`.
+- With the flag off, the engine is neither imported nor registered and `/capabilities` lists only
+  Kokoro; startup works with torch uninstalled.
 
 ---
 

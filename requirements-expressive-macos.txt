@@ -1,0 +1,25 @@
+# Optional dependencies for local development of the expressive engine on macOS.
+#
+# The image uses requirements-expressive.txt, which pins the CPU-only
+# `torch==2.6.0+cpu` build. PyTorch publishes no macOS wheel carrying a `+cpu`
+# local version (and no macOS x86_64 wheel at all for 2.6.0), so that file
+# cannot resolve on a Mac. The plain PyPI wheel is already CPU/MPS — it carries
+# no CUDA — so it is a faithful development substitute.
+#
+# CI validates the image file, not this one.
+#
+# Requires Python 3.13+ for the same reason as the image file: below 3.13,
+# chatterbox-tts caps numpy<2.0.0 while kokoro-onnx requires numpy>=2.0.2, and
+# the two cannot be resolved together.
+
+chatterbox-tts==0.1.7
+
+# chatterbox-tts 0.1.7 requires torch==2.6.0 and torchaudio==2.6.0 exactly.
+torch==2.6.0
+torchaudio==2.6.0
+
+# The same dependency traps as the image file: numba/librosa need
+# coverage>=7.6, and resemble-perth needs setuptools<81 (see
+# docs/measurements/chatterbox-cpu.md).
+coverage>=7.6
+setuptools<81

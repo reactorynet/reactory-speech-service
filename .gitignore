@@ -49,3 +49,7 @@ htmlcov/
 reports/
 # Designed-voice preview WAVs (derived from the recipe and regenerated on demand)
 data/previews/
+
+# Chatterbox weights (optional expressive engine; downloaded on demand, never committed)
+models/chatterbox/
+models/**/*.safetensors
