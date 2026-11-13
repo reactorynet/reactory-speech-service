@@ -53,3 +53,9 @@ data/previews/
 # Chatterbox weights (optional expressive engine; downloaded on demand, never committed)
 models/chatterbox/
 models/**/*.safetensors
+
+# ProcessAITicket pipeline scratch state (report, review, publish decision).
+# Never committed: a tracked .ai-agent/ leaks into every later worktree and a
+# stale review-normalised.json can present another ticket's approval as this
+# run's verdict. See PROCESS-003 (REACTORY-302016408/20261113/2279880544).
+.ai-agent/
