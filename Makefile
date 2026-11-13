@@ -53,9 +53,11 @@ docker-run:
 image-size:
 	./scripts/check_image_size.sh --build
 
-# Optional expressive profile (SPEECH-005). Builds ON TOP of speech-core; the
-# default image and its size assertion are unchanged. Weights are downloaded on
-# demand into the models volume, never at build time.
+# Optional expressive profile (SPEECH-005). A separate build, NOT layered on
+# speech-core: it needs Python 3.13 while speech-core is 3.11 (chatterbox-tts
+# caps numpy<2.0.0 below 3.13; kokoro-onnx needs numpy>=2.0.2). The default
+# image and its size assertion are unchanged. Chatterbox weights are downloaded
+# on demand into the models volume, never at build time.
 expressive-build: image-size
 	docker build -f Dockerfile.expressive -t reactory-speech-service:speech-expressive .
 

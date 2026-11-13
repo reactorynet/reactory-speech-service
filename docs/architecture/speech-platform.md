@@ -283,7 +283,7 @@ serve. An expired LRU entry is dropped and counted as an eviction rather than se
 | Profile | Contents | Approx footprint | Use |
 |---|---|---|---|
 | `speech-core` | Kokoro ONNX + faster-whisper | ~350 MB models, ≤2048 MiB image | Default, laptop, edge node |
-| `speech-expressive` | adds Chatterbox `standard`/`turbo` (MIT) + CPU torch | +3–4 GB weights, +torch | Brand voices, expressive delivery |
+| `speech-expressive` | adds Chatterbox `standard`/`turbo` (MIT) + CPU torch, on Python 3.13 | +3–4 GB weights, +torch | Brand voices, expressive delivery |
 | `speech-gpu` | adds Orpheus or a large model | multi-GB, GPU | Premium acting tier |
 
 The API surface is identical across profiles. `/capabilities` reports which engines are present, so
@@ -291,10 +291,21 @@ a client adapts rather than fails.
 
 ### Expressive profile (SPEECH-005)
 
-The `speech-expressive` image extends `speech-core` (`Dockerfile.expressive`) and is the only
-profile that installs `torch` and `chatterbox-tts`. The engine is gated by `CHATTERBOX_ENABLED`,
-which defaults to **false**: with it off the adapter module is never imported, the engine is not
-registered and `/capabilities` lists only Kokoro.
+The `speech-expressive` profile (`Dockerfile.expressive`) is the only profile that installs
+`torch` and `chatterbox-tts`. It is **not** layered on `speech-core`, because it requires **Python
+3.13** while `speech-core` runs 3.11. That is forced by a hard upstream marker collision:
+
+| Package | numpy requirement |
+|---|---|
+| `chatterbox-tts` 0.1.7 | `numpy<2.0.0` for `python_version < "3.13"`, `numpy>=2.0.0` for `>= 3.13` |
+| `kokoro-onnx` 0.4.0+ | `numpy>=2.0.2` (unconditional) |
+
+Below 3.13 those are unsatisfiable together, so an expressive image inheriting the 3.11 base could
+never be built. On 3.13 the graph resolves (`numpy 2.5.4`, `torch 2.6.0+cpu`). `speech-core` itself
+is unchanged — same interpreter, same size ceiling. 3.13 is already in the CI test matrix.
+
+The engine is gated by `CHATTERBOX_ENABLED`, which defaults to **false**: with it off the adapter
+module is never imported, the engine is not registered and `/capabilities` lists only Kokoro.
 
 Measured on CPU (see [chatterbox-cpu.md](../measurements/chatterbox-cpu.md)): RTF 0.13, 3.9 GB
 resident, 21.9 s load, 24 kHz. The `/capabilities` row therefore carries a `compute_cost` advisory —
@@ -303,9 +314,11 @@ batch narration yes, interactive turns no. `exaggeration` is bounded to 0.3–0.
 `prosody.rate` is never stacked on it. Production audio carries no watermark; the adapter
 replaces Chatterbox's Perth watermarker with a no-op (ADR-0003 decision 4).
 
-Weights are **never** fetched at image build time: they are downloaded on demand into the models
-volume with a manifest recording the MIT licence and a SHA-256 per file. A missing or corrupt
-model is a clear warning and a Kokoro fallback, never a 500.
+The Kokoro and faster-whisper models are baked in as they are for `speech-core`, so the documented
+Kokoro fallback works out of the box. **Chatterbox weights are never fetched at image build
+time**: they are downloaded on demand into the models volume with a manifest recording the MIT
+licence, the variant and a SHA-256 per file. A missing, corrupt or wrong-variant model is a clear
+warning and a Kokoro fallback, never a 500.
 
 ### Image budget
 

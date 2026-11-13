@@ -45,18 +45,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 3.13, not 3.11: chatterbox-tts caps numpy<2.0.0 below 3.13 while
+      # kokoro-onnx requires numpy>=2.0.2, so the two are unsatisfiable together
+      # on the speech-core interpreter. This must match Dockerfile.expressive.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       # chatterbox-tts 0.1.7 pins torch==2.6.0 and torchaudio==2.6.0 exactly.
       # A pin that cannot resolve makes the speech-expressive image unbuildable,
       # and that failure is invisible to the default-image test suite. This step
       # resolves the whole graph without installing it.
-      # Resolve against requirements.txt as well: Dockerfile.expressive installs
-      # the expressive file on top of the speech-core environment, so a conflict
-      # with numpy / transformers / librosa shows up here rather than as a silent
-      # up/downgrade inside the image.
+      # Resolve both files together: Dockerfile.expressive installs them as one
+      # resolution, so a conflict with numpy / transformers / librosa shows up
+      # here rather than as a silent up/downgrade inside the image.
       - name: Resolve the expressive profile on top of speech-core
         run: |
           python -m pip install --upgrade pip

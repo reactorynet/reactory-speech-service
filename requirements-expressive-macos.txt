@@ -7,6 +7,10 @@
 # no CUDA — so it is a faithful development substitute.
 #
 # CI validates the image file, not this one.
+#
+# Requires Python 3.13+ for the same reason as the image file: below 3.13,
+# chatterbox-tts caps numpy<2.0.0 while kokoro-onnx requires numpy>=2.0.2, and
+# the two cannot be resolved together.
 
 chatterbox-tts==0.1.7
 

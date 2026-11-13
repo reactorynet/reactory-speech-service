@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import types
@@ -852,17 +853,79 @@ def test_default_dockerfile_does_not_grow_for_the_expressive_engine():
         assert forbidden not in dockerfile
 
 
-def test_expressive_profile_extends_core_and_never_downloads_at_build_time():
-    dockerfile = (REPO_ROOT / "Dockerfile.expressive").read_text(encoding="utf-8")
-    # Comments may mention the operator command; build instructions may not run it.
-    instructions = "\n".join(
-        line for line in dockerfile.splitlines() if not line.strip().startswith("#")
+#: The interpreter the expressive profile must use.  Below 3.13 the dependency
+#: graph is unsatisfiable: chatterbox-tts 0.1.7 caps numpy<2.0.0 for
+#: python_version < "3.13" while every kokoro-onnx release requires numpy>=2.0.2.
+EXPRESSIVE_PYTHON = "3.13"
+
+
+def _dockerfile_instructions(name: str) -> str:
+    """Dockerfile text with comments stripped (build instructions only)."""
+    text = (REPO_ROOT / name).read_text(encoding="utf-8")
+    return "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("#")
     )
 
-    assert "FROM reactory-speech-service:speech-core" in instructions
+
+def test_expressive_profile_is_built_on_python_313_not_speech_core():
+    """A sibling 3.13 build, because speech-core is 3.11 and cannot be reused.
+
+    This is not a style choice: the numpy marker collision below 3.13 makes the
+    graph uninstallable, so inheriting the 3.11 base would produce an image that
+    can never be built. speech-core itself stays untouched.
+    """
+    instructions = _dockerfile_instructions("Dockerfile.expressive")
+
+    assert f"FROM python:{EXPRESSIVE_PYTHON}-slim" in instructions
+    assert "speech-core" not in instructions.split("WORKDIR")[0].split("FROM")[-1]
+    assert "requirements.txt" in instructions
     assert "requirements-expressive.txt" in instructions
+
+
+def test_expressive_profile_never_downloads_chatterbox_at_build_time():
+    instructions = _dockerfile_instructions("Dockerfile.expressive")
+
     assert "download_chatterbox" not in instructions
-    assert "scripts/download_models.py" not in instructions
+    # The Kokoro/Whisper download speech-core already performs is allowed and
+    # necessary: it is what makes the documented Kokoro fallback work.
+    assert "scripts/download_models.py" in instructions
+
+
+def test_expressive_python_version_matches_the_ci_resolution_job():
+    """Dockerfile and CI must agree, or the guard validates the wrong graph."""
+    instructions = _dockerfile_instructions("Dockerfile.expressive")
+    match = re.search(r"FROM python:([0-9.]+)-slim", instructions)
+    assert match, "Dockerfile.expressive must pin its interpreter explicitly"
+    dockerfile_python = match.group(1)
+
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = workflow.split("expressive-deps:")[1].split("image-size:")[0]
+    ci_match = re.search(r'python-version:\s*"([0-9.]+)"', job)
+    assert ci_match, "the expressive-deps job must pin its interpreter explicitly"
+
+    assert dockerfile_python == ci_match.group(1) == EXPRESSIVE_PYTHON, (
+        "Dockerfile.expressive builds on Python "
+        f"{dockerfile_python} but the CI resolution job uses {ci_match.group(1)}; "
+        "the npm-style guard would then validate a graph the image never installs"
+    )
+
+
+def test_the_numpy_conflict_that_forces_python_313_is_still_real():
+    """Pin the upstream markers that justify the 3.13 requirement.
+
+    If either library changes its numpy marker this test fails, which is the
+    signal to reconsider the interpreter — rather than leaving a stale comment
+    explaining a conflict that no longer exists.
+    """
+    expressive = (REPO_ROOT / "requirements-expressive.txt").read_text(encoding="utf-8")
+
+    assert "chatterbox-tts==0.1.7" in expressive
+    assert 'numpy<2.0.0  for python_version < "3.13"' in expressive
+    assert "kokoro-onnx  0.4.0+ : numpy>=2.0.2  (unconditional)" in expressive
+    # And the base requirements must keep requiring the newer numpy, or the
+    # 3.13 requirement would stop being necessary.
+    default = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert "kokoro-onnx" in default
 
 
 def test_expressive_requirements_pin_the_documented_dependency_traps():

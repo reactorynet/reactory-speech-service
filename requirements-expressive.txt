@@ -1,5 +1,19 @@
 # Optional dependencies for the `speech-expressive` profile (SPEECH-005).
 #
+# PYTHON 3.13 IS REQUIRED FOR THIS FILE.
+#
+# chatterbox-tts 0.1.7 and kokoro-onnx cannot share an interpreter below 3.13:
+#
+#   chatterbox-tts 0.1.7 : numpy<2.0.0  for python_version < "3.13"
+#                          numpy>=2.0.0 for python_version >= "3.13"
+#   kokoro-onnx  0.4.0+ : numpy>=2.0.2  (unconditional)
+#
+# On 3.11 the graph is unsatisfiable (pip: "these package versions have
+# conflicting dependencies ... chatterbox-tts and numpy>=1.26.0"). On 3.13
+# chatterbox asks for numpy>=2.0.0, which kokoro-onnx satisfies, and the whole
+# graph resolves. Dockerfile.expressive therefore uses python:3.13-slim rather
+# than inheriting speech-core's 3.11 base.
+#
 # This is the **image** file: it pins the CPU-only torch build used by
 # Dockerfile.expressive. A developer on macOS uses
 # requirements-expressive-macos.txt instead, because PyTorch publishes no

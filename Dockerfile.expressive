@@ -1,21 +1,65 @@
 # speech-expressive — optional profile for the Chatterbox expressive engine.
 #
-# This image EXTENDS the default speech-core image; it does not replace it and
-# it does not change it. The default image, its startup time and its 2048 MiB
-# size ceiling are unchanged (tests/test_image_budget.py). Only this profile
-# carries torch and chatterbox-tts.
+# The default speech-core image is NOT modified by this profile: it keeps its
+# own Python 3.11 base, its startup time and its 2048 MiB size ceiling
+# (tests/test_image_budget.py). Only this profile carries torch and
+# chatterbox-tts.
 #
-# Weights are NEVER downloaded at build time (3.1 GB). Mount the models volume
-# and run scripts/download_chatterbox.py on demand. With the flag off, or with
-# no model mounted, the service starts normally and Chatterbox requests fall back
-# to Kokoro with a clear warning.
-FROM reactory-speech-service:speech-core
+# WHY THIS IS A SIBLING BUILD RATHER THAN `FROM speech-core`
+#
+# This profile requires **Python 3.13**, and speech-core is 3.11, so it cannot
+# inherit that interpreter. The reason is a hard upstream marker collision, not
+# a preference:
+#
+#   chatterbox-tts 0.1.7 : numpy<2.0.0  for python_version < "3.13"
+#                          numpy>=2.0.0 for python_version >= "3.13"
+#   kokoro-onnx  0.4.0+ : numpy>=2.0.2  (unconditional)
+#
+# On 3.11 those are unsatisfiable — pip reports "chatterbox-tts and
+# numpy>=1.26.0 have conflicting dependencies". On 3.13 chatterbox wants
+# numpy>=2.0.0, which kokoro-onnx's >=2.0.2 satisfies, and the whole graph
+# resolves (torch 2.6.0+cpu, numpy 2.5.4, 0 CUDA packages).
+#
+# 3.13 is already a supported interpreter for this service: the CI test matrix
+# runs 3.11 and 3.13.
+#
+# Weights are NEVER downloaded at build time for this optional engine. The
+# Kokoro/Whisper download below is the same one speech-core performs, so the
+# documented Kokoro fallback still works out of the box. Chatterbox weights
+# (3.1 GB) are mounted as a volume and fetched with
+# scripts/download_chatterbox.py on demand.
+FROM python:3.13-slim
 
-USER root
+# System dependencies for espeak-ng (Kokoro phonemisation) and ffmpeg.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak-ng \
+    ffmpeg \
+    ca-certificates \
+    curl \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-expressive.txt ./
-RUN pip install --no-cache-dir -r requirements-expressive.txt \
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+WORKDIR /app
+
+# Base and expressive requirements are installed as ONE resolution, exactly as
+# the CI `expressive-deps` job verifies. Installing them separately would let
+# pip silently up/downgrade a shared package.
+COPY requirements.txt requirements-expressive.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-expressive.txt \
     && rm -rf /root/.cache/pip
+
+# Baked-in CPU models for the default engine (Kokoro + faster-whisper), same as
+# speech-core. This script never touches Chatterbox.
+COPY models/ models/
+COPY scripts/ scripts/
+RUN python scripts/download_models.py
+
+COPY app/ app/
+COPY data/ data/
 
 # Enable the engine for this profile only. Override with CHATTERBOX_ENABLED=false
 # to run the expressive image in the default configuration.
@@ -24,9 +68,12 @@ ENV CHATTERBOX_VARIANT=standard
 ENV CHATTERBOX_DEVICE=cpu
 ENV CHATTERBOX_MODEL_DIR=/app/models/chatterbox
 
-# Optional: the weights are supplied as a volume, never baked into the image.
+# The expressive weights are supplied as a volume, never baked into the image.
 VOLUME ["/app/models/chatterbox"]
 
 EXPOSE 8765
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8765/health')" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"]
