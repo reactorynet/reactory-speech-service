@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -48,7 +48,7 @@ jobs:
       # 3.13, not 3.11: chatterbox-tts caps numpy<2.0.0 below 3.13 while
       # kokoro-onnx requires numpy>=2.0.2, so the two are unsatisfiable together
       # on the speech-core interpreter. This must match Dockerfile.expressive.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
