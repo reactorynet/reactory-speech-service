@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import builtins
 import inspect
+import io
 import json
 import logging
 import os
+import pickle
 import re
 import subprocess
 import sys
+import threading
 import types
 from dataclasses import replace
 from pathlib import Path
@@ -40,6 +43,8 @@ from app.engines.chatterbox import (
     VARIANT_REQUIRED_BYTES,
     VARIANT_REPOS,
     VARIANT_SUPPORTS_EXAGGERATION,
+    STYLE_EXAGGERATION,
+    ChatterboxCloneBackend,
     ChatterboxDependencyError,
     ChatterboxEngine,
     ChatterboxError,
@@ -285,7 +290,10 @@ def test_capabilities_declare_what_the_engine_can_actually_honour(tmp_path):
     assert "whisper" not in caps.styles
     assert caps.native_rate is False
     assert caps.supports_streaming is False
-    assert caps.supports_cloning is False  # engine can clone; this service cannot yet
+    # The adapter can render a stored embedding (SPEECH-006); whether a given
+    # deployment may create clones is a separate fail-closed configuration gate
+    # reported by /health.
+    assert caps.supports_cloning is True
     assert caps.gpu_required is False
     assert caps.sample_rates == [24000]
     assert caps.attribution == CHATTERBOX_ATTRIBUTION
@@ -354,6 +362,18 @@ def test_empathetic_is_applied_as_a_bounded_exaggeration(tmp_path):
     # The engine controls intensity, not valence; the warning says so rather
     # than letting the caller believe "empathetic" is modelled.
     assert any("not valence" in warning for warning in plan.warnings)
+
+
+def test_empathetic_mapping_avoids_the_intelligibility_cliff_for_names():
+    """SPEECH-006 known issue: 0.62 mangled short words and proper nouns.
+
+    Round-tripping our own output through STT heard "I've been" for "Hi Vin" at
+    0.62, while 0.44 rendered "Hi, Vin" correctly.  A clone inheriting the old
+    default would degrade names in the subject's own voice, so the mapping is
+    pinned below the measured cliff rather than left as a preference.
+    """
+    assert STYLE_EXAGGERATION["empathetic"] == 0.44
+    assert STYLE_EXAGGERATION["empathetic"] < 0.5
 
 
 @pytest.mark.parametrize(
@@ -619,8 +639,19 @@ def test_empathetic_measurably_differs_from_neutral_on_the_same_voice(tmp_path, 
 
     assert neutral.engine == empathetic.engine == "chatterbox"
     assert neutral.applied.get("exaggeration") is None
-    assert empathetic.applied["exaggeration"] > 0.5
-    assert abs(empathetic.duration - neutral.duration) > 0.02
+
+    # Pin the measured render to the mapped value instead of asserting a loose
+    # inequality.  The double models duration as (1 - 0.3*exaggeration) seconds
+    # and treats a missing exaggeration as 0.5, so these bounds prove the *value*
+    # that reached the model, not merely that something differed.
+    mapped = STYLE_EXAGGERATION["empathetic"]
+    assert mapped == 0.44
+    assert empathetic.applied["exaggeration"] == pytest.approx(mapped)
+    assert neutral.duration == pytest.approx(1.0 - 0.3 * 0.5, abs=1e-3)
+    assert empathetic.duration == pytest.approx(1.0 - 0.3 * mapped, abs=1e-3)
+    assert abs(empathetic.duration - neutral.duration) == pytest.approx(
+        0.3 * (0.5 - mapped), abs=1e-3
+    )
 
 
 def test_missing_model_falls_back_to_kokoro_with_a_warning(tmp_path, monkeypatch):
@@ -1520,7 +1551,8 @@ def test_resolve_voice_rejects_foreign_and_wrong_variant_ids(tmp_path):
     assert engine.resolve_voice(None) == ("default_turbo", "en-us")
 
 
-def test_reference_voice_is_refused_until_cloning_ships(tmp_path, monkeypatch):
+def test_reference_voice_is_refused_when_the_clone_is_not_active(tmp_path, monkeypatch):
+    """Fail closed: with no active clone record, a reference voice is not renderable."""
     engine = ChatterboxEngine(model_store=ChatterboxModelStore(tmp_path))
     reference = replace(
         voice_registry.get_record(CHATTERBOX_STANDARD),
@@ -1528,9 +1560,25 @@ def test_reference_voice_is_refused_until_cloning_ships(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(engine, "_records", lambda: [reference])
     monkeypatch.setattr(voice_registry, "get_record", lambda _voice_id: reference)
+    monkeypatch.setattr(voice_registry, "reference_voice_is_active", lambda _vid: False)
 
-    with pytest.raises(UnknownVoiceError, match="SPEECH-006"):
+    with pytest.raises(UnknownVoiceError, match="not active"):
         engine.resolve_voice(CHATTERBOX_STANDARD)
+
+
+def test_reference_voice_resolves_when_the_clone_store_says_it_is_active(
+    tmp_path, monkeypatch
+):
+    """The adapter asks the clone store; it never assumes a reference is usable."""
+    engine = ChatterboxEngine(model_store=ChatterboxModelStore(tmp_path))
+    reference = replace(
+        voice_registry.get_record(CHATTERBOX_STANDARD),
+        style_spec={"type": "reference", "variant": "standard"},
+    )
+    monkeypatch.setattr(voice_registry, "get_record", lambda _voice_id: reference)
+    monkeypatch.setattr(voice_registry, "reference_voice_is_active", lambda _vid: True)
+
+    assert engine.resolve_voice(CHATTERBOX_STANDARD) == (reference.engine_voice_id, "en-us")
 
 
 def test_no_registered_voice_for_the_variant_is_reported(tmp_path, monkeypatch):
@@ -2425,3 +2473,272 @@ def test_capabilities_flag_off_payload_is_unchanged(tmp_path, monkeypatch):
     assert "default_voice" in row
     for entry in row.get("language_support") or []:
         assert "caveat" in entry
+
+# ---------------------------------------------------------------------------
+# Speaker conditioning is shared model state (review finding B1)
+#
+# Chatterbox keeps the speaker on the model object (``model.conds``), not in a
+# per-call argument.  The doubles above ignored conditioning entirely, which is
+# exactly why a leak was invisible: they rendered the same audio whoever was
+# "speaking".  The double below derives the rendered amplitude from the
+# conditioning currently set on the model, so "which voice rendered this?" is a
+# measurable property, and these tests drive the **real** adapter path
+# (``ChatterboxEngine.synthesize`` -> ``_render`` / ``_render_clone`` ->
+# ``ChatterboxCloneBackend``).  Only ``torch.save``/``torch.load`` are replaced,
+# via pickle, because torch is not part of the default CI profile and the
+# defect under test is not in the serialisation.
+# ---------------------------------------------------------------------------
+
+
+class _Speaker:
+    """A speaker conditioning value, identified by the level it renders at."""
+
+    def __init__(self, name: str, level: float) -> None:
+        self.name = name
+        self.level = level
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return f"_Speaker({self.name!r}, {self.level})"
+
+
+class _FakeTorch:
+    """The only two torch calls the clone backend makes, with pickle underneath."""
+
+    def save(self, payload, buffer) -> None:
+        pickle.dump(payload, buffer)
+
+    def load(self, buffer, map_location=None, weights_only=None):
+        return pickle.load(buffer)
+
+
+class CondsAwareChatterbox:
+    """A model double where ``conds`` is real state, not decoration.
+
+    ``generate`` renders at the level carried by the conditioning currently
+    assigned to the model, so a render that borrowed another speaker's
+    conditioning is visibly different audio.
+    """
+
+    sr = 24000
+    PACK_LEVEL = 0.10
+
+    def __init__(self) -> None:
+        self.watermarker = None
+        self.conds: _Speaker | None = _Speaker("pack-default", self.PACK_LEVEL)
+        self.renders: list[dict] = []
+        #: Optional hook fired just before a render consumes the conditioning.
+        self.on_generate = None
+
+    def prepare_conditionals(self, path, exaggeration=0.5):
+        data, _rate = sf.read(path, dtype="float32", always_2d=True)
+        level = round(0.20 + float(abs(data.mean())), 4)
+        self.conds = _Speaker(f"clip:{Path(path).name}:{level}", level)
+
+    def generate(self, text, exaggeration=None, audio_prompt_path=None):
+        if self.on_generate is not None:
+            self.on_generate(text, self.conds)
+        level = self.PACK_LEVEL if self.conds is None else self.conds.level
+        self.renders.append(
+            {
+                "text": text,
+                "speaker": None if self.conds is None else self.conds.name,
+                "level": level,
+            }
+        )
+        return _TensorLike(np.full(max(1, int(self.sr * 0.01)), level, dtype=np.float32))
+
+
+CLONE_TEST_VOICE = "clone_conditioning_00000001"
+
+
+def _conds_engine(tmp_path) -> ChatterboxEngine:
+    engine = ChatterboxEngine(
+        model_store=ChatterboxModelStore(tmp_path, variant="standard"), variant="standard"
+    )
+    engine.model = CondsAwareChatterbox()
+    engine.set_ready(True)
+    return engine
+
+
+def _fake_torch() -> _FakeTorch:
+    """The torch stand-in, as a named function so it can be patched in by name."""
+    return _FakeTorch()
+
+
+def _plain_torch(monkeypatch) -> None:
+    """Substitute only the serialisation primitive the clone backend uses."""
+    monkeypatch.setattr(ChatterboxCloneBackend, "_torch", staticmethod(_fake_torch))
+
+
+def _enable_reference_voice(voice_id: str = CLONE_TEST_VOICE) -> str:
+    """Register a clone as an active reference voice for the adapter's resolver."""
+    record = voice_registry.VoiceRecord(
+        id=voice_id,
+        name=voice_id,
+        engine="chatterbox",
+        language="en-US",
+        gender="unspecified",
+        tags=("clone", "reference"),
+        quality=None,
+        license="MIT",
+        attribution=CHATTERBOX_ATTRIBUTION,
+        style_spec={"type": "reference", "variant": "standard", "engine": "chatterbox"},
+        supports={"rate": False, "pitch": False, "volume": False, "style": True, "clone": True},
+        enabled=True,
+        locale="en-us",
+        raw={},
+    )
+    voice_registry.set_reference_lookup(lambda vid: record if vid == voice_id else None)
+    voice_registry.set_reference_authorizer(lambda vid: vid == voice_id)
+    voice_registry.set_reference_provider(lambda _engine: [record])
+    return voice_id
+
+
+def _reference_wav(level: float, *, seconds: float = 0.1) -> bytes:
+    """A short constant-amplitude clip; two clips differ in mean amplitude."""
+    samples = np.full(int(24000 * seconds), level, dtype=np.float32)
+    buffer = io.BytesIO()
+    sf.write(buffer, samples, 24000, format="WAV", subtype="PCM_16")
+    return buffer.getvalue()
+
+
+def _first_sample(audio: bytes) -> float:
+    samples, _rate = sf.read(io.BytesIO(audio), dtype="float32")
+    return float(samples[0])
+
+
+def test_a_pack_voice_render_is_byte_identical_after_a_clone_is_created_and_rendered(
+    tmp_path, monkeypatch
+):
+    """B1: extraction and clone rendering must not hijack the shared model."""
+    _plain_torch(monkeypatch)
+    engine = _conds_engine(tmp_path)
+    voice_id = _enable_reference_voice()
+    model = engine.model
+
+    before = engine.synthesize(EngineRequest(text="Hi Vin.", voice=CHATTERBOX_STANDARD)).audio
+    assert model.conds.name == "pack-default"
+
+    backend = ChatterboxCloneBackend(engine)
+    embedding = backend.extract_embedding(_reference_wav(0.20))
+    # ``prepare_conditionals`` leaves the subject on the model unless restored.
+    assert model.conds.name == "pack-default", "extract_embedding kept the subject"
+
+    after_extract = engine.synthesize(
+        EngineRequest(text="Hi Vin.", voice=CHATTERBOX_STANDARD)
+    ).audio
+    assert after_extract == before, "creating a clone changed the pack voice"
+
+    cloned = engine.synthesize(
+        EngineRequest(text="Hi Vin.", voice=voice_id, clone_embedding=embedding)
+    )
+    assert cloned.audio != before, "the clone did not render its own conditioning"
+    assert model.conds.name == "pack-default", "clone rendering kept the subject"
+
+    after_clone = engine.synthesize(
+        EngineRequest(text="Hi Vin.", voice=CHATTERBOX_STANDARD)
+    ).audio
+    assert after_clone == before, "rendering a clone changed the pack voice"
+
+
+def test_the_conditioning_is_restored_even_when_extraction_fails(tmp_path, monkeypatch):
+    """A failed extraction must not leave the subject's conditioning behind."""
+    _plain_torch(monkeypatch)
+    engine = _conds_engine(tmp_path)
+    model = engine.model
+
+    def explode(self, path, exaggeration=0.5):
+        self.conds = _Speaker("clip:leaked", 0.9)
+        raise RuntimeError("upstream explode")
+
+    monkeypatch.setattr(CondsAwareChatterbox, "prepare_conditionals", explode)
+
+    with pytest.raises(RuntimeError, match="upstream explode"):
+        ChatterboxCloneBackend(engine).extract_embedding(_reference_wav(0.20))
+
+    assert model.conds.name == "pack-default", "a failed extraction leaked the subject"
+
+
+def test_two_consecutive_clones_each_render_their_own_conditioning(tmp_path, monkeypatch):
+    """B1: the last clone's conditioning must not win for the next one."""
+    _plain_torch(monkeypatch)
+    engine = _conds_engine(tmp_path)
+    voice_id = _enable_reference_voice()
+    backend = ChatterboxCloneBackend(engine)
+
+    first = backend.extract_embedding(_reference_wav(0.20))
+    second = backend.extract_embedding(_reference_wav(0.50))
+
+    def render(embedding: bytes) -> bytes:
+        return engine.synthesize(
+            EngineRequest(text="Hi Vin.", voice=voice_id, clone_embedding=embedding)
+        ).audio
+
+    first_audio = render(first)
+    assert engine.model.conds.name == "pack-default", "the first clone kept the model"
+    second_audio = render(second)
+    assert engine.model.conds.name == "pack-default", "the second clone kept the model"
+    first_again = render(first)
+
+    assert _first_sample(first_audio) == pytest.approx(0.40, abs=5e-3)
+    assert _first_sample(second_audio) == pytest.approx(0.70, abs=5e-3)
+    assert first_audio != second_audio
+    assert first_audio == first_again, (
+        "the first clone's render changed after a second clone was used"
+    )
+
+
+def test_a_pack_voice_render_concurrent_with_a_clone_render_is_not_contaminated(
+    tmp_path, monkeypatch
+):
+    """B1: the two renders must not overlap inside the shared model."""
+    _plain_torch(monkeypatch)
+    engine = _conds_engine(tmp_path)
+    voice_id = _enable_reference_voice()
+    model = engine.model
+    backend = ChatterboxCloneBackend(engine)
+    embedding = backend.extract_embedding(_reference_wav(0.20))
+
+    in_clone_render = threading.Event()
+    release_clone = threading.Event()
+
+    def hold_only_for_the_clone(_text, conds):  # runs inside model.generate
+        if conds is not None and conds.name.startswith("clip:"):
+            in_clone_render.set()
+            release_clone.wait(timeout=10)
+
+    model.on_generate = hold_only_for_the_clone
+
+    results: dict[str, object] = {}
+
+    def clone_render():
+        results["clone"] = engine.synthesize(
+            EngineRequest(text="Hi Vin.", voice=voice_id, clone_embedding=embedding)
+        )
+
+    def pack_render():
+        results["pack"] = engine.synthesize(
+            EngineRequest(text="Hi Vin.", voice=CHATTERBOX_STANDARD)
+        )
+
+    clone_thread = threading.Thread(target=clone_render)
+    clone_thread.start()
+    assert in_clone_render.wait(timeout=5), "the clone render never started"
+
+    pack_thread = threading.Thread(target=pack_render)
+    pack_thread.start()
+    # The pack render must wait for the model: if it ran now it would read the
+    # subject's conditioning and speak in the cloned voice.
+    pack_thread.join(timeout=0.3)
+    assert pack_thread.is_alive(), "the pack voice rendered inside a clone render"
+
+    release_clone.set()
+    clone_thread.join(timeout=10)
+    pack_thread.join(timeout=10)
+    assert not clone_thread.is_alive() and not pack_thread.is_alive()
+
+    assert _first_sample(results["pack"].audio) == pytest.approx(
+        CondsAwareChatterbox.PACK_LEVEL, abs=5e-3
+    )
+    assert _first_sample(results["clone"].audio) == pytest.approx(0.40, abs=5e-3)
+    assert model.conds.name == "pack-default"

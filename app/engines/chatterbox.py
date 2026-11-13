@@ -35,9 +35,12 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import io
 import json
 import logging
 import re
+import tempfile
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -91,7 +94,11 @@ STYLE_EXAGGERATION: dict[str, float] = {
     "calm": 0.32,
     "serious": 0.36,
     "warm": 0.44,
-    "empathetic": 0.62,
+    # 0.62 mangled short words and proper nouns: round-tripping our own output
+    # through STT heard "I've been" for "Hi Vin" at 0.62, while 0.44 rendered
+    # "Hi, Vin" correctly. A clone inheriting the old default would degrade the
+    # names of the very person whose voice it reuses (SPEECH-006 known issue).
+    "empathetic": 0.44,
     "cheerful": 0.66,
     "excited": 0.70,
 }
@@ -145,8 +152,9 @@ CHUNK_GAP_SECONDS = 0.08
 #: list: adjacent literals there are indistinguishable from a missing comma and
 #: are flagged by static analysis (CodeQL ``py/implicit-string-concatenation-in-list``).
 _CLONING_NOTE = (
-    "Chatterbox supports zero-shot cloning, but this service does not expose it yet "
-    + "(SPEECH-006, gated on ADR-0003). supports_cloning is therefore false."
+    "Chatterbox supports zero-shot cloning and this adapter can render a stored speaker "
+    + "embedding. Clone *creation* is still gated per deployment by the consent layer "
+    + "(SPEECH-006, ADR-0003): /health reports whether cloning is configured."
 )
 _WATERMARK_NOTE = (
     "Production audio carries no Perth watermark: the adapter replaces the model "
@@ -912,6 +920,11 @@ def _chunk_text(text: str, *, limit: int = MAX_CHARS_PER_CALL) -> list[str]:
     return [chunk for chunk in chunks if chunk]
 
 
+def _record_variant(record) -> str:
+    """The variant a registry record belongs to (pack voices and clones)."""
+    return str(record.style_spec.get("variant") or "standard").lower()
+
+
 def _to_numpy(wav) -> np.ndarray:
     """Convert a torch tensor (or array-like) to a flat float32 numpy array."""
     value = wav
@@ -964,6 +977,20 @@ class ChatterboxEngine:
         #: the backend signature, so the advertised styles are correct before the
         #: model is loaded and cannot claim a control the variant ignores.
         self._supports_exaggeration = VARIANT_SUPPORTS_EXAGGERATION.get(self.variant, False)
+        #: Guards every use of the shared model object.  Chatterbox keeps the
+        #: speaker conditioning on the model instance (``model.conds``), not in a
+        #: per-call argument, so a render that changes it silently changes the
+        #: voice of every other render using the same object.  A clone sets it to
+        #: the subject; a pack-voice render reads whatever happens to be there.
+        #: Both must therefore hold this lock for the whole model call, and a
+        #: clone must always restore the previous conditioning.  An RLock because
+        #: the clone backend re-enters it from inside a render.
+        self._model_guard = threading.RLock()
+
+    @property
+    def model_guard(self) -> threading.RLock:
+        """The lock guarding the shared model's mutable speaker conditioning."""
+        return self._model_guard
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -1104,11 +1131,23 @@ class ChatterboxEngine:
     # ------------------------------------------------------------------
 
     def _records(self) -> list:
-        return [
+        """Pack voices for this variant plus **active** clones.
+
+        Clones are contributed by the clone store through the registry hook and
+        are listed only while active.  A disabled or expired clone disappears
+        from the catalogue immediately, without a restart.
+        """
+        records = [
             record
             for record in voice_registry.VOICE_REGISTRY.for_engine(self.id, enabled_only=True)
-            if str(record.style_spec.get("variant") or "standard").lower() == self.variant
+            if _record_variant(record) == self.variant
         ]
+        records.extend(
+            record
+            for record in voice_registry.reference_records(self.id)
+            if _record_variant(record) == self.variant
+        )
+        return records
 
     @property
     def engine_voice_ids(self) -> list[str] | None:
@@ -1146,9 +1185,10 @@ class ChatterboxEngine:
         """Resolve a caller-facing id to ``(engine voice key, locale)``.
 
         Chatterbox has no named voice pack: ``default`` means the model's own
-        voice.  Reference voices are cloning, which is SPEECH-006 and not exposed
-        here, so a ``reference`` style spec is refused rather than silently
-        rendered with the default voice.
+        voice.  A ``reference`` record is a consent-gated clone (SPEECH-006): it
+        resolves only while the clone store says it is active, and rendering it
+        requires the stored embedding.  A clone that is not active is refused
+        rather than silently rendered with the model's default speaker.
         """
         records = self._records()
         if voice_id is None:
@@ -1171,10 +1211,14 @@ class ChatterboxEngine:
                     f"'{record.style_spec.get('variant')}', not the deployed '{self.variant}'."
                 )
         if record.style_type == "reference":
-            raise UnknownVoiceError(
-                f"Voice '{record.id}' is a cloned reference voice. Voice cloning is not "
-                "exposed by this service yet (SPEECH-006, gated on ADR-0003)."
-            )
+            # Fail closed: a reference voice is renderable only while the clone
+            # store says it is active.  With no store in this process the default
+            # is inactive, never "assume active".
+            if not voice_registry.reference_voice_is_active(record.id):
+                raise UnknownVoiceError(
+                    f"Voice '{record.id}' is a cloned reference voice and is not active "
+                    "(disabled, taken down, expired, or unknown to this instance)."
+                )
         return record.engine_voice_id, record.locale
 
     # ------------------------------------------------------------------
@@ -1209,10 +1253,10 @@ class ChatterboxEngine:
             native_pitch=False,
             native_volume=False,
             styles=expressive,
-            # Chatterbox can clone zero-shot, but this service exposes no cloning
-            # endpoint until SPEECH-006 lands.  Advertising it here would promise
-            # an API that does not exist, so it is declared False and explained.
-            supports_cloning=False,
+            # SPEECH-006: the adapter exposes a clone backend that renders a stored
+            # speaker embedding.  Whether THIS deployment may create clones is a
+            # separate, fail-closed configuration question reported by /health.
+            supports_cloning=True,
             supports_streaming=False,
             supports_ssml=False,
             sample_rates=[CHATTERBOX_SAMPLE_RATE],
@@ -1430,13 +1474,29 @@ class ChatterboxEngine:
         if not text:
             raise ChatterboxError("No speakable text remained after stripping markup.")
 
-        # Defensive re-application: a backend may rebuild its watermarker, and the
-        # requirement is that *no* returned audio carries one.
-        if hasattr(self._model, "watermarker"):
-            neutralise_watermarker(self._model)
-
         exaggeration = plan.applied.get("exaggeration", EXAGGERATION_NEUTRAL)
-        samples = self._render(text, exaggeration=float(exaggeration))
+        # The whole model call is serialised.  ``model.conds`` is shared mutable
+        # state: a pack-voice render reads whatever conditioning is currently set,
+        # and a clone render sets it to the subject.  If the two overlapped, one
+        # would speak in the other's voice.  The engine limiter allows one
+        # Chatterbox render at a time, but ``synthesize`` is also reached
+        # synchronously (stream, sentence spans) without taking a slot, so the
+        # guarantee belongs here.
+        with self._model_guard:
+            # Defensive re-application: a backend may rebuild its watermarker, and
+            # the requirement is that *no* returned audio carries one.
+            if hasattr(self._model, "watermarker"):
+                neutralise_watermarker(self._model)
+
+            if req.clone_embedding is not None:
+                # A clone is re-derived from its stored embedding; the reference
+                # clip is gone by default, so there is deliberately no path that
+                # reads one.
+                samples = self._render_clone(
+                    text, req.clone_embedding, exaggeration=float(exaggeration)
+                )
+            else:
+                samples = self._render(text, exaggeration=float(exaggeration))
         return AudioResult(
             audio=self.samples_to_wav(samples, self._sample_rate),
             duration=len(samples) / self._sample_rate,
@@ -1480,6 +1540,37 @@ class ChatterboxEngine:
             rendered.append(wav)
         return np.concatenate(rendered) if len(rendered) > 1 else rendered[0]
 
+    def clone_backend(self) -> "ChatterboxCloneBackend | None":
+        """The embedding/render bridge for cloning, or ``None`` when not loaded.
+
+        Exposed rather than imported by the clone service so that module never
+        touches torch or this adapter directly.
+        """
+        if self._model is None:
+            return None
+        return ChatterboxCloneBackend(self)
+
+    def _render_clone(
+        self, text: str, embedding: bytes, *, exaggeration: float
+    ) -> np.ndarray:
+        """Render from a stored embedding; the reference clip is not consulted."""
+        backend = self.clone_backend()
+        if backend is None:  # pragma: no cover - guarded by synthesize
+            raise ChatterboxError("Chatterbox model is not loaded")
+        chunks = _chunk_text(text)
+        if not chunks:
+            raise ChatterboxError("No speakable text remained after chunking.")
+        rendered: list[np.ndarray] = []
+        gap = np.zeros(int(self._sample_rate * CHUNK_GAP_SECONDS), dtype=np.float32)
+        for index, chunk in enumerate(chunks):
+            wav, _rate = backend.render(chunk, embedding, exaggeration=exaggeration)
+            if wav.size == 0:
+                raise ChatterboxError("Chatterbox returned empty audio for a cloned voice.")
+            if index:
+                rendered.append(gap)
+            rendered.append(wav)
+        return np.concatenate(rendered) if len(rendered) > 1 else rendered[0]
+
     def _generate(self, model, text: str, exaggeration: float) -> np.ndarray:
         kwargs: dict[str, Any] = {}
         if self.supports_exaggeration:
@@ -1504,6 +1595,113 @@ class ChatterboxEngine:
         return [part for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
 
 
+class ChatterboxCloneBackend:
+    """Speaker-embedding extraction and rendering for a loaded Chatterbox model.
+
+    The reference clip is deleted as soon as extraction completes (ADR-0003 #3),
+    so both operations are expressed in terms of one opaque artefact: the
+    model's speaker conditioning (``model.conds``), serialised with ``torch``.
+    A clone is therefore *re-derived from the embedding only*; there is no path
+    here that reads a reference clip at synthesis time.
+
+    **The conditioning is borrowed, never taken.**  ``model.conds`` lives on the
+    single shared model object, so leaving it set to the subject would make every
+    later render in that process speak in the subject's voice — the exact harm
+    ADR-0003 exists to prevent, pointed at the other voices.  Both methods
+    therefore run under :attr:`ChatterboxEngine.model_guard` and restore the
+    previous conditioning in ``finally``.
+
+    Requires the ``speech-expressive`` profile (torch + chatterbox-tts).  The
+    governance layer and its tests run without either: the backend is resolved
+    at request time, so an unloaded engine makes cloning unavailable rather than
+    breaking the service.
+    """
+
+    def __init__(self, engine: ChatterboxEngine) -> None:
+        self._engine = engine
+
+    def _model(self):
+        model = self._engine.model
+        if model is None:  # pragma: no cover - guarded by clone_backend()
+            raise ChatterboxError("Chatterbox model is not loaded")
+        return model
+
+    @staticmethod
+    def _torch():
+        try:
+            import torch
+        except ImportError as exc:  # pragma: no cover - expressive profile only
+            raise ChatterboxDependencyError(
+                "Voice cloning needs torch and chatterbox-tts (requirements-expressive.txt)."
+            ) from exc
+        return torch
+
+    def extract_embedding(self, audio: bytes) -> bytes:
+        """Build the speaker conditioning blob from a decodable reference clip.
+
+        The clip is written to a **private** directory (mode 0700, created by
+        ``TemporaryDirectory``) only because the upstream API takes a path, and
+        the whole directory is removed in ``finally``.  The caller's own
+        encrypted copy is deleted separately in the clone store.
+
+        The conditioning is restored before returning: ``prepare_conditionals``
+        leaves ``model.conds`` pointing at the subject, which would otherwise
+        become the default speaker for every later pack-voice render.
+        """
+        torch = self._torch()
+        model = self._model()
+        data, sample_rate = sf.read(io.BytesIO(audio), dtype="float32", always_2d=True)
+        mono = data.mean(axis=1) if data.ndim > 1 else data
+        with tempfile.TemporaryDirectory(prefix="speech-clone-") as private_dir:
+            clip_path = Path(private_dir) / "reference.wav"
+            sf.write(str(clip_path), mono, int(sample_rate), format="WAV", subtype="PCM_16")
+            prepare = getattr(model, "prepare_conditionals", None)
+            if not callable(prepare):  # pragma: no cover - depends on upstream API
+                raise ChatterboxError(
+                    "The installed Chatterbox build cannot derive speaker conditionals "
+                    "from a reference clip; cloning is unavailable on this build."
+                )
+            with self._engine.model_guard:
+                previous = getattr(model, "conds", None)
+                try:
+                    prepare(str(clip_path), exaggeration=EXAGGERATION_NEUTRAL)
+                    if getattr(model, "conds", None) is None:  # pragma: no cover - upstream API
+                        raise ChatterboxError("Chatterbox produced no speaker conditioning.")
+                    buffer = io.BytesIO()
+                    torch.save(model.conds, buffer)
+                    return buffer.getvalue()
+                finally:
+                    # The subject's conditioning is a borrowed value, not this
+                    # model's state.  Restore it even when extraction failed.
+                    model.conds = previous
+
+    def render(
+        self, text: str, embedding: bytes, *, exaggeration: float
+    ) -> tuple[np.ndarray, int]:
+        """Render text with the stored conditioning, returning float32 samples.
+
+        The previous conditioning is restored in ``finally`` so that rendering a
+        clone cannot change the voice of a concurrent or later pack-voice render.
+        """
+        torch = self._torch()
+        model = self._model()
+        kwargs: dict[str, Any] = {}
+        if self._engine.supports_exaggeration:
+            kwargs["exaggeration"] = float(exaggeration)
+        with self._engine.model_guard:
+            previous = getattr(model, "conds", None)
+            try:
+                # Trusted, locally produced bytes.  ``weights_only=False`` is
+                # required to reconstruct the conditioning container in torch 2.6.
+                model.conds = torch.load(
+                    io.BytesIO(embedding), map_location="cpu", weights_only=False
+                )
+                samples = _to_numpy(model.generate(text, **kwargs))
+            finally:
+                model.conds = previous
+        return samples, int(self._engine.sample_rate)
+
+
 __all__ = [
     "CHATTERBOX_ATTRIBUTION",
     "CHATTERBOX_ENGINE",
@@ -1515,6 +1713,7 @@ __all__ = [
     "EXAGGERATION_MIN",
     "ChatterboxDependencyError",
     "ChatterboxEngine",
+    "ChatterboxCloneBackend",
     "ChatterboxError",
     "ChatterboxModelMissing",
     "ChatterboxModelStore",

@@ -87,6 +87,22 @@ def _g2p_report(tts_service: Any) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _cloning_status() -> dict[str, Any] | None:
+    """Whether consent-first cloning is usable, and why not when it is not.
+
+    This is the operator signal the ADR asks for: a deployment that forgot the
+    approver allowlist must not look healthy until the first clone request 503s.
+    Reading it never generates a key and never raises.
+    """
+    try:
+        from app.services.voice_cloning import get_clone_service
+
+        return get_clone_service().availability().as_dict()
+    except Exception:  # pragma: no cover - health must never fail the probe
+        logger.warning("Could not read voice-cloning availability", exc_info=True)
+        return {"available": False, "reason": "availability could not be assessed"}
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
     """Health check — service status, engine availability and queue depth."""
@@ -101,6 +117,7 @@ async def health(request: Request) -> HealthResponse:
         queue_depth=_queue_depth(engines),
         cache=_cache_stats(tts_service),
         g2p=_g2p_report(tts_service),
+        cloning=_cloning_status(),
     )
 
 

@@ -150,6 +150,10 @@ class EngineRequest(BaseModel):
     is_phonemes: bool = False
     phonetic_preprocess: bool | None = None
     custom_lexicon: dict[str, str] | None = None
+    #: Encrypted-at-rest speaker embedding for a ``reference`` (cloned) voice.
+    #: The reference clip is deleted after extraction, so this — never a path to
+    #: a clip — is what a clone synthesis may be derived from.
+    clone_embedding: bytes | None = None
 
 
 class AudioResult(BaseModel):
@@ -163,6 +167,8 @@ class AudioResult(BaseModel):
     applied: dict[str, Any] = Field(default_factory=dict)
     ignored: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    #: Signed provenance manifest, present only for cloned (reference) voices.
+    manifest: dict[str, Any] | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
