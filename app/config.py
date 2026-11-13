@@ -42,8 +42,15 @@ class Settings(BaseSettings):
     clone_signing_key_path: str = "data/keys/clone_signing_key.pem"
     clone_reference_key_path: str = "data/keys/clone_reference.key"
     #: Stable identity of this deployment, carried inside every signature.  Empty
-    #: falls back to the hostname, which is stable for a container per instance.
+    #: falls back to ``key-<fingerprint of the signing key>``: a container or pod
+    #: hostname changes on every redeploy, the signing key does not.
     clone_instance_id: str = ""
+    #: Request header in which the authorising gateway passes the authenticated
+    #: caller (e.g. ``X-Authenticated-User``).  When set, clone creation requires
+    #: it, the consent approver must equal it and it is recorded as the creator.
+    #: Empty keeps the approver a request-body assertion, so the clone endpoints
+    #: must then be reachable only through that gateway.
+    clone_principal_header: str = ""
 
     # Models are discovered from directories under ``models_dir`` that contain a
     # ``model.bin``; the ``whisper_model_size`` above selects the one loaded at boot.

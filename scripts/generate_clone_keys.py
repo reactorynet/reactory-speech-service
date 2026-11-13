@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--instance-id",
         default="",
-        help="Instance id recorded in signatures; defaults to the hostname at runtime",
+        help="Instance id recorded in signatures; defaults to key-<signing key fingerprint> at runtime",
     )
     parser.add_argument(
         "--force",
