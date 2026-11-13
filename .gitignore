@@ -65,3 +65,8 @@ data/keys/
 # Consent records, encrypted embeddings, the provenance manifest registry and
 # the audit log are runtime data, not source.
 data/clones/
+# ProcessAITicket pipeline scratch state (report, review, publish decision).
+# Never committed: a tracked .ai-agent/ leaks into every later worktree and a
+# stale review-normalised.json can present another ticket's approval as this
+# run's verdict. See PROCESS-003 (REACTORY-302016408/20261113/2279880544).
+.ai-agent/
