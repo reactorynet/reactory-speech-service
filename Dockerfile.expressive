@@ -1,15 +1,15 @@
 # speech-expressive — optional profile for the Chatterbox expressive engine.
 #
 # The default speech-core image is NOT modified by this profile: it keeps its
-# own Python 3.11 base, its startup time and its 2048 MiB size ceiling
+# own Python 3.14 base, its startup time and its 2048 MiB size ceiling
 # (tests/test_image_budget.py). Only this profile carries torch and
 # chatterbox-tts.
 #
 # WHY THIS IS A SIBLING BUILD RATHER THAN `FROM speech-core`
 #
-# This profile requires **Python 3.13**, and speech-core is 3.11, so it cannot
-# inherit that interpreter. The reason is a hard upstream marker collision, not
-# a preference:
+# This profile requires **Python 3.13**, and speech-core is 3.14, so it cannot
+# inherit that interpreter. Below 3.13 the reason is a hard upstream marker
+# collision, not a preference:
 #
 #   chatterbox-tts 0.1.7 : numpy<2.0.0  for python_version < "3.13"
 #                          numpy>=2.0.0 for python_version >= "3.13"
@@ -20,8 +20,13 @@
 # numpy>=2.0.0, which kokoro-onnx's >=2.0.2 satisfies, and the whole graph
 # resolves (torch 2.6.0+cpu, numpy 2.5.4, 0 CUDA packages).
 #
-# 3.13 is already a supported interpreter for this service: the CI test matrix
-# runs 3.11 and 3.13.
+# From 3.14 chatterbox-tts 0.1.7 switches to torch>=2.9.0 / torchaudio>=2.9.0,
+# not the torch 2.6.0+cpu build pinned and measured for this profile
+# (docs/measurements/chatterbox-cpu.md), so 3.13 is the one interpreter where
+# the pinned, measured graph installs.
+#
+# 3.13 is a supported interpreter for this service: the CI test matrix runs
+# 3.11, 3.13 and 3.14.
 #
 # Weights are NEVER downloaded at build time for this optional engine. The
 # Kokoro/Whisper download below is the same one speech-core performs, so the

@@ -293,16 +293,20 @@ a client adapts rather than fails.
 
 The `speech-expressive` profile (`Dockerfile.expressive`) is the only profile that installs
 `torch` and `chatterbox-tts`. It is **not** layered on `speech-core`, because it requires **Python
-3.13** while `speech-core` runs 3.11. That is forced by a hard upstream marker collision:
+3.13** while `speech-core` runs 3.14. Below 3.13 that is forced by a hard upstream marker collision:
 
 | Package | numpy requirement |
 |---|---|
 | `chatterbox-tts` 0.1.7 | `numpy<2.0.0` for `python_version < "3.13"`, `numpy>=2.0.0` for `>= 3.13` |
 | `kokoro-onnx` 0.4.0+ | `numpy>=2.0.2` (unconditional) |
 
-Below 3.13 those are unsatisfiable together, so an expressive image inheriting the 3.11 base could
-never be built. On 3.13 the graph resolves (`numpy 2.5.4`, `torch 2.6.0+cpu`). `speech-core` itself
-is unchanged — same interpreter, same size ceiling. 3.13 is already in the CI test matrix.
+Below 3.13 those are unsatisfiable together, so an expressive image on 3.11 could never be built.
+On 3.13 the graph resolves (`numpy 2.5.4`, `torch 2.6.0+cpu`). From 3.14 `chatterbox-tts` 0.1.7
+switches to `torch>=2.9.0`, not the CPU build pinned and measured for this profile, so the expressive
+image stays on 3.13 while `speech-core` moved to 3.14. 3.13 is in the CI test matrix.
+
+`speech-core` is on 3.14 rather than 3.15 because `onnxruntime` (required by both `kokoro-onnx` and
+`faster-whisper`) publishes no 3.15 wheel or sdist as of 1.32.0, so the image cannot build on 3.15.
 
 The engine is gated by `CHATTERBOX_ENABLED`, which defaults to **false**: with it off the adapter
 module is never imported, the engine is not registered and `/capabilities` lists only Kokoro.

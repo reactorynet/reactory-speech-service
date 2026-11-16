@@ -12,7 +12,8 @@
 # conflicting dependencies ... chatterbox-tts and numpy>=1.26.0"). On 3.13
 # chatterbox asks for numpy>=2.0.0, which kokoro-onnx satisfies, and the whole
 # graph resolves. Dockerfile.expressive therefore uses python:3.13-slim rather
-# than inheriting speech-core's 3.11 base.
+# than inheriting speech-core's 3.14 base (on 3.14 chatterbox-tts wants
+# torch>=2.9.0, not the 2.6.0+cpu pinned below).
 #
 # This is the **image** file: it pins the CPU-only torch build used by
 # Dockerfile.expressive. A developer on macOS uses
@@ -39,7 +40,7 @@
 chatterbox-tts==0.1.7
 
 # chatterbox-tts 0.1.7 declares `torch==2.6.0` and `torchaudio==2.6.0` exactly
-# (for Python < 3.14; this image is 3.11), so no other version resolves.
+# (for Python < 3.14; this image is 3.13), so no other version resolves.
 #
 # The `+cpu` local version is required, not cosmetic: the plain manylinux wheel
 # on PyPI declares ~11 nvidia-*-cu12 dependencies and pulls multiple GB of CUDA
@@ -49,7 +50,7 @@ chatterbox-tts==0.1.7
 # requirement names no local version.
 #
 # uv resolves indexes with a "first index wins" policy; verify with
-#     uv pip compile requirements-expressive.txt --python-version 3.11 \
+#     uv pip compile requirements-expressive.txt --python-version 3.13 \
 #         --python-platform x86_64-unknown-linux-gnu --index-strategy unsafe-best-match
 torch==2.6.0+cpu
 torchaudio==2.6.0+cpu

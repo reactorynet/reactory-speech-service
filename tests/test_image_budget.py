@@ -116,6 +116,29 @@ def test_the_default_profile_does_not_pull_in_a_gpu_runtime():
         assert forbidden not in dockerfile, f"the default image must not install {forbidden}"
 
 
+def test_the_image_interpreter_is_in_the_ci_test_matrix():
+    """The Python the image ships must be one CI runs the suite on.
+
+    Without this a base-image bump (Dependabot's python:3.11 -> 3.15) is only
+    built, never tested, and the pytest jobs stay green on interpreters the
+    image does not use.
+    """
+    match = re.search(
+        r"^FROM python:(\d+\.\d+)-slim", DOCKERFILE.read_text(encoding="utf-8"), re.M
+    )
+    assert match, "Dockerfile must pin its interpreter as python:X.Y-slim"
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    matrix = re.search(r"python-version:\s*\[([^\]]*)\]", workflow)
+    assert matrix, "the test job must declare a python-version matrix"
+    versions = re.findall(r'"([0-9.]+)"', matrix.group(1))
+
+    assert match.group(1) in versions, (
+        f"Dockerfile builds on Python {match.group(1)} but the CI test matrix "
+        f"only runs {versions}"
+    )
+
+
 def test_the_makefile_exposes_the_image_size_check():
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 

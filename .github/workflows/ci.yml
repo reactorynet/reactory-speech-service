@@ -19,7 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13"]
+        # 3.11 is the requires-python floor; 3.14 is the speech-core image
+        # interpreter (Dockerfile) and must stay here so a base-image bump is
+        # tested, not only built (tests/test_image_budget.py asserts this).
+        python-version: ["3.11", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
@@ -45,9 +48,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 3.13, not 3.11: chatterbox-tts caps numpy<2.0.0 below 3.13 while
-      # kokoro-onnx requires numpy>=2.0.2, so the two are unsatisfiable together
-      # on the speech-core interpreter. This must match Dockerfile.expressive.
+      # 3.13 exactly: below 3.13 chatterbox-tts caps numpy<2.0.0 while
+      # kokoro-onnx requires numpy>=2.0.2 (unsatisfiable together); from 3.14
+      # chatterbox-tts wants torch>=2.9 instead of the measured 2.6.0+cpu pin.
+      # This must match Dockerfile.expressive.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

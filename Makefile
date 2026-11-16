@@ -12,7 +12,7 @@ setup: $(VENV)/bin/activate download-models
 	@echo "✅ Setup complete. Run 'make dev' to start the service."
 
 $(VENV)/bin/activate:
-	python3.13 -m venv $(VENV) || python3.11 -m venv $(VENV) || python3 -m venv $(VENV)
+	python3.14 -m venv $(VENV) || python3.13 -m venv $(VENV) || python3.11 -m venv $(VENV) || python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 	touch $(VENV)/bin/activate
@@ -54,8 +54,9 @@ image-size:
 	./scripts/check_image_size.sh --build
 
 # Optional expressive profile (SPEECH-005). A separate build, NOT layered on
-# speech-core: it needs Python 3.13 while speech-core is 3.11 (chatterbox-tts
-# caps numpy<2.0.0 below 3.13; kokoro-onnx needs numpy>=2.0.2). The default
+# speech-core: it needs Python 3.13 while speech-core is 3.14 (chatterbox-tts
+# caps numpy<2.0.0 below 3.13, where kokoro-onnx needs numpy>=2.0.2, and wants
+# torch>=2.9 from 3.14 instead of the measured 2.6.0+cpu pin). The default
 # image and its size assertion are unchanged. Chatterbox weights are downloaded
 # on demand into the models volume, never at build time.
 expressive-build: image-size

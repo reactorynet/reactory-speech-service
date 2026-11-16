@@ -900,11 +900,12 @@ def _dockerfile_instructions(name: str) -> str:
 
 
 def test_expressive_profile_is_built_on_python_313_not_speech_core():
-    """A sibling 3.13 build, because speech-core is 3.11 and cannot be reused.
+    """A sibling 3.13 build, because speech-core is 3.14 and cannot be reused.
 
     This is not a style choice: the numpy marker collision below 3.13 makes the
-    graph uninstallable, so inheriting the 3.11 base would produce an image that
-    can never be built. speech-core itself stays untouched.
+    graph uninstallable, and from 3.14 chatterbox-tts requires torch>=2.9
+    rather than the pinned, measured torch 2.6.0+cpu. speech-core itself stays
+    untouched.
     """
     instructions = _dockerfile_instructions("Dockerfile.expressive")
 
