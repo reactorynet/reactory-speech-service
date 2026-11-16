@@ -1,4 +1,5 @@
 .PHONY: setup dev test lint docker-build docker-run image-size clean download-models \
+	models-download models-archive models-restore \
 	expressive-build expressive-run download-chatterbox
 
 VENV := .venv
@@ -19,6 +20,19 @@ $(VENV)/bin/activate:
 
 download-models:
 	$(PYTHON) scripts/download_models.py
+
+# Offline model bundle, for hosts whose network blocks the model sources (see
+# README "Restricted networks"). Download and archive on a connected machine,
+# copy the archive across, restore on the restricted host.
+models-download:
+	./scripts/models-download.sh
+
+models-archive:
+	./scripts/models-archive.sh
+
+models-restore:
+	@[ -n "$(ARCHIVE)" ] || { echo "usage: make models-restore ARCHIVE=reactory-speech-models-<date>.tar.gz" >&2; exit 2; }
+	./scripts/models-restore.sh "$(ARCHIVE)"
 
 dev:
 	$(UVICORN) app.main:app --host 0.0.0.0 --port 8765 --reload

@@ -37,6 +37,33 @@ make docker-build
 make docker-run
 ```
 
+### Restricted networks: offline model bundle
+
+The image build downloads Kokoro from GitHub and the Whisper weights from
+Hugging Face. Where a network blocks either (a corporate web filter that refuses
+`huggingface.co`, for example), fetch the models on a machine that can reach
+them, carry them across as one archive, and restore them before building:
+
+```bash
+# On a machine with access (needs Python 3.10+; a throwaway venv is used if
+# httpx/huggingface_hub are missing). WHISPER_MODEL_SIZE or --whisper-size
+# picks the Whisper model, default base.
+scripts/models-download.sh
+scripts/models-archive.sh        # -> reactory-speech-models-<date>.tar.gz (+ .sha256)
+
+# Copy both files to the restricted host, then in the repository there:
+scripts/models-restore.sh reactory-speech-models-<date>.tar.gz
+podman build -t reactory-speech-service:speech-core .    # or: make docker-build
+```
+
+`models-restore.sh` writes nothing until the archive checksum, every entry name
+and type, and every file checksum have been verified; it refuses absolute paths,
+`..`, links, and files that would overwrite a different model unless `--force`
+is given. `scripts/download_models.py` skips files that are already present, so
+the build then needs no network for models. The same targets exist as
+`make models-download`, `make models-archive` and
+`make models-restore ARCHIVE=<file>`.
+
 Or via the Reactory docker-compose:
 
 ```bash
