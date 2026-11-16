@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -52,7 +52,7 @@ jobs:
       # kokoro-onnx requires numpy>=2.0.2 (unsatisfiable together); from 3.14
       # chatterbox-tts wants torch>=2.9 instead of the measured 2.6.0+cpu pin.
       # This must match Dockerfile.expressive.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
