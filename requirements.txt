@@ -2,6 +2,14 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 kokoro-onnx>=0.4.0
 faster-whisper>=1.1.0
+# PyAV is faster-whisper's audio decoder. faster-whisper 1.2.1 (latest) calls
+# av.open(..., metadata_errors="ignore"), an argument PyAV 19.0 removed, so with
+# av 19 every transcription fails with TypeError. faster-whisper only asks for
+# av>=11, and av 19 ships wheels for Python 3.12+ only, which is why the 3.11
+# image (av 18.1.0) worked and the 3.14 image broke. Lift the cap once a
+# faster-whisper release stops passing that argument;
+# tests/test_stt_audio_decode.py fails if the pair stops working.
+av>=11,<19
 soundfile>=0.12.0
 numpy>=1.26.0
 pydantic-settings>=2.6.0
