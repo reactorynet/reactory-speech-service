@@ -23,6 +23,10 @@ models/whisper-*/
 # as untracked. Match the name with or without a trailing slash.
 models/whisper-*
 models/faster-whisper-*
+# Offline model bundles (scripts/models-archive.sh) are carried between hosts,
+# never committed.
+reactory-speech-models-*.tar.gz
+reactory-speech-models-*.tar.gz.sha256
 
 # IDE
 .idea/
