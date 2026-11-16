@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -282,3 +283,164 @@ def test_download_rejects_a_whisper_size_that_is_a_path(tmp_path: Path):
 
     assert completed.returncode == 2
     assert "must be a model size" in completed.stderr
+
+
+# ---------------------------------------------------------------------------
+# Optional Chatterbox weights (--include-chatterbox)
+# ---------------------------------------------------------------------------
+
+FAKE_CHATTERBOX = {
+    "chatterbox/manifest.json": b'{\n  "engine": "chatterbox",\n  "variant": "standard"\n}\n',
+    "chatterbox/ve.safetensors": b"ve",
+    "chatterbox/t3_cfg.safetensors": b"t3",
+    "chatterbox/s3gen.safetensors": b"s3gen",
+    "chatterbox/tokenizer.json": b"{}",
+    "chatterbox/conds.pt": b"conds",
+}
+
+
+def _archive_names(path: Path) -> list[str]:
+    with tarfile.open(path) as tar:
+        return tar.getnames()
+
+
+def test_archive_leaves_chatterbox_out_unless_asked(tmp_path: Path):
+    models = _write_models(tmp_path / "models", {**FAKE_MODELS, **FAKE_CHATTERBOX})
+    out = tmp_path / "b.tar.gz"
+
+    completed = _run(ARCHIVE, "--models-dir", models, "--output", out, cwd=tmp_path)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not any("chatterbox" in n for n in _archive_names(out))
+    with tarfile.open(out) as tar:
+        assert "chatterbox: none" in tar.extractfile(f"{BUNDLE}/MANIFEST.txt").read().decode()
+
+
+def test_chatterbox_round_trips_when_included(tmp_path: Path):
+    models = _write_models(tmp_path / "models", {**FAKE_MODELS, **FAKE_CHATTERBOX})
+    _write_models(models, {"chatterbox/.cache/huggingface/lock": b"x"})
+    out = tmp_path / "b.tar.gz"
+
+    packed = _run(
+        ARCHIVE, "--models-dir", models, "--output", out, "--include-chatterbox", cwd=tmp_path
+    )
+
+    assert packed.returncode == 0, packed.stderr
+    with tarfile.open(out) as tar:
+        manifest = tar.extractfile(f"{BUNDLE}/MANIFEST.txt").read().decode()
+    assert "chatterbox: standard" in manifest
+    assert "files: 12" in manifest
+
+    target = tmp_path / "restored"
+    restored = _run(RESTORE, out, "--models-dir", target, cwd=tmp_path)
+
+    assert restored.returncode == 0, restored.stderr
+    assert _tree(target) == {**FAKE_MODELS, **FAKE_CHATTERBOX}
+    assert "make expressive-build" in restored.stdout
+    # Staging may hard-link the sources; none may be left with an extra link.
+    assert all(p.stat().st_nlink == 1 for p in models.rglob("*") if p.is_file())
+
+
+def test_including_chatterbox_requires_its_manifest(tmp_path: Path):
+    weights = {k: v for k, v in FAKE_CHATTERBOX.items() if not k.endswith("manifest.json")}
+    models = _write_models(tmp_path / "models", {**FAKE_MODELS, **weights})
+    out = tmp_path / "b.tar.gz"
+
+    completed = _run(
+        ARCHIVE, "--models-dir", models, "--output", out, "--include-chatterbox", cwd=tmp_path
+    )
+
+    assert completed.returncode == 1
+    assert "chatterbox/manifest.json" in completed.stderr
+    assert not out.exists()
+
+
+def test_restore_without_chatterbox_does_not_mention_it(archive: Path, tmp_path: Path):
+    completed = _run(RESTORE, archive, "--models-dir", tmp_path / "restored", cwd=tmp_path)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Chatterbox" not in completed.stdout
+
+
+def test_download_script_checks_the_files_the_engine_loads():
+    """The shell list must track VARIANT_FILES, or a partial download passes."""
+    from app.engines.chatterbox import MANIFEST_NAME, VARIANT_FILES
+
+    script = DOWNLOAD.read_text(encoding="utf-8")
+    listed = re.search(r'^CHATTERBOX_FILES="([^"]*)"', script, re.M)
+
+    assert listed, "models-download.sh must declare CHATTERBOX_FILES"
+    assert sorted(listed.group(1).split()) == sorted([MANIFEST_NAME, *VARIANT_FILES["standard"]])
+
+
+def test_chatterbox_weights_are_never_built_into_an_image():
+    """Both Dockerfiles COPY models/; restored weights must not ride along."""
+    ignored = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+    assert "models/chatterbox/" in ignored
+
+
+def _fake_python(tmp_path: Path, *, skip_chatterbox_file: str = "") -> tuple[Path, Path]:
+    """A ``--python`` stand-in that writes what the real downloaders would."""
+    log = tmp_path / "calls.log"
+    stub = tmp_path / "fake-python"
+    whisper = " ".join(p.split("/", 1)[1] for p in FAKE_MODELS if p.startswith("whisper-"))
+    chatterbox = " ".join(
+        p.split("/", 1)[1] for p in FAKE_CHATTERBOX if not p.endswith(skip_chatterbox_file or "\0")
+    )
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        '[ "$1" = "-c" ] && exit 0\n'
+        f'echo "$(basename "$1") ${{*:2}}" >> "{log}"\n'
+        'case "$(basename "$1")" in\n'
+        "  download_models.py)\n"
+        '    touch "$MODELS_DIR/kokoro-v1.0.onnx" "$MODELS_DIR/voices-v1.0.bin"\n'
+        '    mkdir -p "$MODELS_DIR/whisper-$WHISPER_MODEL_SIZE"\n'
+        f'    for f in {whisper}; do echo x > "$MODELS_DIR/whisper-$WHISPER_MODEL_SIZE/$f"; done ;;\n'
+        "  download_chatterbox.py)\n"
+        '    dir="${*: -1}"; mkdir -p "$dir"\n'
+        f'    for f in {chatterbox}; do echo x > "$dir/$f"; done ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return stub, log
+
+
+def test_download_fetches_chatterbox_only_when_asked(tmp_path: Path):
+    stub, log = _fake_python(tmp_path)
+    models = tmp_path / "models"
+
+    plain = _run(DOWNLOAD, "--models-dir", models, "--python", stub, cwd=tmp_path)
+
+    assert plain.returncode == 0, plain.stderr
+    assert "download_chatterbox.py" not in log.read_text()
+    assert "--include-chatterbox" not in plain.stdout
+
+    full = _run(
+        DOWNLOAD, "--models-dir", models, "--python", stub, "--include-chatterbox", cwd=tmp_path
+    )
+
+    assert full.returncode == 0, full.stderr
+    assert (
+        f"download_chatterbox.py --variant standard --models-dir {models.resolve()}/chatterbox"
+        in log.read_text()
+    )
+    assert "models-archive.sh" in full.stdout and "--include-chatterbox" in full.stdout
+
+
+def test_download_reports_a_partial_chatterbox_download(tmp_path: Path):
+    stub, _ = _fake_python(tmp_path, skip_chatterbox_file="conds.pt")
+
+    completed = _run(
+        DOWNLOAD,
+        "--models-dir",
+        tmp_path / "models",
+        "--python",
+        stub,
+        "--include-chatterbox",
+        cwd=tmp_path,
+    )
+
+    assert completed.returncode == 1
+    assert "chatterbox/conds.pt" in completed.stderr

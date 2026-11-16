@@ -24,11 +24,14 @@ download-models:
 # Offline model bundle, for hosts whose network blocks the model sources (see
 # README "Restricted networks"). Download and archive on a connected machine,
 # copy the archive across, restore on the restricted host.
+# CHATTERBOX=1 adds the optional Chatterbox weights (about 3.2 GB) to the bundle.
+BUNDLE_FLAGS := $(if $(filter 1,$(CHATTERBOX)),--include-chatterbox)
+
 models-download:
-	./scripts/models-download.sh
+	./scripts/models-download.sh $(BUNDLE_FLAGS)
 
 models-archive:
-	./scripts/models-archive.sh
+	./scripts/models-archive.sh $(BUNDLE_FLAGS)
 
 models-restore:
 	@[ -n "$(ARCHIVE)" ] || { echo "usage: make models-restore ARCHIVE=reactory-speech-models-<date>.tar.gz" >&2; exit 2; }
