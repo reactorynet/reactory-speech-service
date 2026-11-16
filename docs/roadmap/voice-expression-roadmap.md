@@ -16,7 +16,8 @@ Phases are ordered by **dependency and risk**, not by visible impact:
 - Phase 1 introduces the adapter boundary. Every later engine and every tone feature depends on
   it, so it must land before any model is added.
 - Phases 2 and 4 are additive to the boundary and can run in parallel once Phase 1 is merged.
-- Phase 5 (cloning) is a policy question before it is an engineering question, so it is gated.
+- Phase 5 (cloning) was a policy question before it was an engineering question, so it was gated
+  on an ADR and delivered last. That ordering held: ADR-0003 was accepted before any code.
 - Phase 6 produces the evidence needed to make routing decisions, so it follows the first two
   engines.
 
@@ -26,7 +27,7 @@ flowchart LR
     P1 --> P2[Phase 2 Voice design]
     P1 --> P3[Phase 3 Performance]
     P1 --> P4[Phase 4 Expressive engine]
-    P4 --> P5[Phase 5 Cloning - policy gated]
+    P4 --> P5[Phase 5 Cloning - delivered]
     P2 --> P6[Phase 6 Evaluation]
     P4 --> P6
     P1 --> P7[Phase 7 STT upgrade]
@@ -222,23 +223,45 @@ deliberately reuses the conservative standard figures.
 
 ## Phase 5 — Consent-first voice cloning
 
-**Ticket:** `SPEECH-006` · **Priority:** medium · **Type:** feature · **Status:** blocked on policy
+**Ticket:** `SPEECH-006` · **Priority:** medium · **Type:** feature · **Status:** delivered
 
-Cloning is a governance problem before it is an engineering problem. This ticket must not start
-until the consent and watermarking policy is approved and recorded as an ADR.
+Cloning was a governance problem before it was an engineering problem, and it shipped in that
+order: [ADR-0003](../adr/0003-consent-first-voice-cloning.md) was accepted first, and the code
+implements it rather than the other way round.
 
-**Preconditions**
+The capability is **implemented but inert**. It stays unavailable until a deployment supplies a
+signing key, a reference-audio key and an approver allowlist. That is the intended shipping state
+for a governance feature: the default is "cannot clone", and enabling it is a deliberate act.
 
-- An approved ADR covering consent records, retention and deletion.
-- A named approver for customer-facing voices.
-- Confirmation that watermarking stays enabled by default.
+**What shipped**
 
-**Scope once unblocked**
+- `POST /api/tts/voices/clone` with reference audio plus a structured consent record. Missing
+  fields are reported individually, and the request is refused when the approver is outside the
+  deployed allowlist, the `scope` is not in the enumeration, or `expiresAt` is already past.
+- Consent record stored **beside the voice** and **signed with the instance key**. The signature
+  proves which instance recorded it and that it is unaltered; it does not prove the subject
+  consented, and the payload says so rather than implying more.
+- Reference audio encrypted at rest under a key **separate from ordinary application data**, and
+  deleted as soon as the speaker embedding exists. Retention is a recorded, reasoned exception
+  hard-capped at 90 days.
+- Takedown, and expiry, take effect **at request time** — no background sweep, and no redeploy. A
+  consent that cannot be verified makes the clone inert rather than merely flagged.
+- Provenance is a **signed manifest per synthesis plus a registry lookup**, keyed by the SHA-256 of
+  the decoded PCM samples. An unknown file reports *"no record found"*, never *"not ours"*.
 
-- `POST /api/tts/voices/clone` with reference audio plus a consent record.
-- Encrypted reference storage, embedding cache, delete endpoint.
-- Watermarking on by default where the engine supports it.
-- Provenance surfaced by `/api/tts/voices/{id}`.
+**What deliberately did not ship**
+
+- **No watermark in production audio.** ADR-0003 decision 4 settled this: watermarking is a
+  development-only diagnostic. The consequence was recorded rather than papered over — there is no
+  technical marker tying shipped audio to us, so provenance rests entirely on the signed manifest.
+  The defensible claim is *"give us this file and we can look for its authorising record"*, not
+  *"we can prove any file came from us"*.
+- No role checks. The service cannot distinguish customer from operator, so `scope` is **recorded,
+  not enforced**, and authorisation lives at the gateway.
+- No bulk cloning, no fine-tuning, no URL or streaming ingest.
+
+See [`docs/voices/voice-cloning.md`](../voices/voice-cloning.md) for the API and
+[`voice-cloning-operations.md`](../voices/voice-cloning-operations.md) for provisioning.
 
 ---
 
