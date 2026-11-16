@@ -1,4 +1,10 @@
-FROM python:3.11-slim
+# Python 3.14, not 3.15: onnxruntime (required by both kokoro-onnx and
+# faster-whisper) publishes no cp315 wheel and no sdist as of 1.32.0, so on
+# 3.15 `pip install -r requirements.txt` cannot resolve and the image does not
+# build. Dependabot is told to ignore python 3.15 on reactorynet PR 15; run
+# `@dependabot unignore python` once onnxruntime ships cp315 wheels.
+# This interpreter must stay in the CI test matrix (tests/test_image_budget.py).
+FROM python:3.14-slim
 
 # System dependencies for espeak-ng (Kokoro phonemization) and ffmpeg (audio conversion)
 RUN apt-get update && apt-get install -y --no-install-recommends \
