@@ -2537,10 +2537,10 @@ class _FakeSerialization:
         serialization = self
 
         class _Guard:
-            def __enter__(self_inner):
+            def __enter__(self):
                 serialization.allowed = set(classes)
 
-            def __exit__(self_inner, *exc):
+            def __exit__(self, *exc):
                 serialization.allowed = set()
                 return False
 
