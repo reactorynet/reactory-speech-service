@@ -366,6 +366,8 @@ class ConsentLookupResponse(BaseModel):
     signatureValid: bool
     verifiedAgainstInstanceId: str | None = None
     notice: str
+    #: Record fields withheld from this response (the subject's identity).
+    redactedFields: list[str] = Field(default_factory=list)
 
 
 class ProvenanceLookupResponse(BaseModel):

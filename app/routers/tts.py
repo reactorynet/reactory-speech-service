@@ -9,6 +9,7 @@ fields on the JSON response).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import json
@@ -30,6 +31,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from app.config import settings
 from app.core.contracts import Direction, DirectionPlan
 from app.core.direction import resolve_direction
 from app.engines.base import EngineUnavailableError
@@ -695,6 +697,44 @@ async def delete_voice(
 MAX_REFERENCE_BYTES = 25 * 1024 * 1024
 
 
+async def _read_bounded(upload: UploadFile, *, field: str) -> bytes:
+    """Read an upload, refusing it once it exceeds :data:`MAX_REFERENCE_BYTES`.
+
+    ``UploadFile.read()`` with no size loads the whole body into memory, so a
+    cap checked afterwards limits nothing: a 2 GB body is already resident by
+    then.  Reading one byte past the cap is enough to know it is too large.
+    """
+    size = getattr(upload, "size", None)
+    if isinstance(size, int) and size > MAX_REFERENCE_BYTES:
+        raise HTTPException(
+            status_code=413, detail=f"{field} is larger than {MAX_REFERENCE_BYTES} bytes"
+        )
+    data = await upload.read(MAX_REFERENCE_BYTES + 1)
+    if len(data) > MAX_REFERENCE_BYTES:
+        raise HTTPException(
+            status_code=413, detail=f"{field} is larger than {MAX_REFERENCE_BYTES} bytes"
+        )
+    return data
+
+
+def _authenticated_principal(request: Request) -> str | None:
+    """The caller identity the authorising gateway asserted, when configured.
+
+    ``None`` means no principal header is configured on this deployment.  An
+    empty string means it is configured but the request did not carry it, which
+    the clone service refuses.
+    """
+    header = str(getattr(settings, "clone_principal_header", "") or "").strip()
+    if not header:
+        return None
+    return request.headers.get(header, "").strip()
+
+
+#: Consent fields that identify the subject.  The record is stored and verified
+#: in full; over HTTP these are withheld (see :func:`clone_consent`).
+REDACTED_CONSENT_FIELDS: tuple[str, ...] = ("subjectName", "evidence")
+
+
 def _parse_consent(raw: str | None) -> dict[str, Any]:
     if raw is None or not raw.strip():
         # Empty is not a malformed object: let the service name every missing
@@ -748,23 +788,37 @@ async def create_voice_clone(
     Refusals: 422 for a missing/invalid field or an out-of-enumeration scope,
     403 for an approver outside the deployed allowlist, 503 when cloning is not
     configured on this instance (absent allowlist or keys).
+
+    **Internal-only** unless ``CLONE_PRINCIPAL_HEADER`` is configured: without
+    it the approver is whatever the request body says, so the endpoint must be
+    reachable only through the authorising gateway.  With it, the approver must
+    be the authenticated caller the gateway names in that header.
+
+    Extraction runs off the event loop, after the cloning engine has been
+    loaded the same way a synthesis loads it.
     """
-    audio = await reference_audio.read()
-    if len(audio) > MAX_REFERENCE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"reference_audio is larger than {MAX_REFERENCE_BYTES} bytes",
-        )
+    audio = await _read_bounded(reference_audio, field="reference_audio")
+    consent_payload = _parse_consent(consent)
     service = get_clone_service()
+    create = functools.partial(
+        service.create,
+        audio,
+        consent_payload,
+        created_by=created_by,
+        retain_reference=retain_reference,
+        retention_reason=retention_reason,
+        retention_days=retention_days,
+        authenticated_principal=_authenticated_principal(request),
+    )
+    tts_service = getattr(request.app.state, "tts_service", None)
     try:
-        descriptor = service.create(
-            audio,
-            _parse_consent(consent),
-            created_by=created_by,
-            retain_reference=retain_reference,
-            retention_reason=retention_reason,
-            retention_days=retention_days,
-        )
+        # Refuse an unconfigured deployment before loading a multi-gigabyte model.
+        await asyncio.to_thread(service.require_available)
+        run_clone_task = getattr(tts_service, "run_clone_task", None)
+        if callable(run_clone_task):
+            descriptor = await run_clone_task(create)
+        else:
+            descriptor = await asyncio.to_thread(create)
     except ApproverNotAllowedError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except CloneValidationError as exc:
@@ -817,16 +871,32 @@ async def clone_consent(voice_id: str) -> ConsentLookupResponse:
     The signature is chain of custody: it proves which instance recorded the
     consent and that it is unaltered.  It does **not** prove the subject
     consented; the response says so in ``notice``.
+
+    The subject's name and the consent evidence are **withheld** from this
+    response (``redactedFields``): the endpoint is reachable by anyone who can
+    list voices, and the subject is not a party to this system.  Verification
+    still runs over the full stored record.  Operators read the full record from
+    the clone store.  A deleted clone's record is kept on disk as chain of
+    custody but is no longer served here (404).
     """
-    result = get_clone_service().consent_record(voice_id)
+    clone_service = get_clone_service()
+    if clone_service.store.get(voice_id) is None:
+        raise HTTPException(
+            status_code=404, detail=f"No consent record for clone '{voice_id}'."
+        )
+    result = await asyncio.to_thread(clone_service.consent_record, voice_id)
     if result is None:
         raise HTTPException(
             status_code=404, detail=f"No consent record for clone '{voice_id}'."
         )
-    record = result["record"]
+    record = dict(result["record"])
+    redacted = [field for field in REDACTED_CONSENT_FIELDS if field in record]
+    for field in redacted:
+        record[field] = "[redacted]"
     return ConsentLookupResponse(
         consentId=record.get("consentId"),
         record=record,
+        redactedFields=redacted,
         signatureValid=result["signatureValid"],
         verifiedAgainstInstanceId=result["verifiedAgainstInstanceId"],
         notice=result["notice"],
@@ -846,15 +916,10 @@ async def verify_provenance(
     A miss returns 404 with the status ``no record found``.  It never says the
     file is foreign: absence of a record is not evidence of absence.
     """
-    audio = await file.read()
-    if len(audio) > MAX_REFERENCE_BYTES:
-        # The lookup decodes the whole file into memory; cap it like an upload.
-        raise HTTPException(
-            status_code=413,
-            detail=f"file is larger than {MAX_REFERENCE_BYTES} bytes",
-        )
+    # The lookup decodes the whole file into memory; cap it like an upload.
+    audio = await _read_bounded(file, field="file")
     try:
-        result = get_clone_service().lookup_provenance(audio)
+        result = await asyncio.to_thread(get_clone_service().lookup_provenance, audio)
     except (ValueError, RuntimeError, OSError) as exc:
         # Only decode failures are the caller's fault. An internal error must not
         # be reported as "your file was undecodable".

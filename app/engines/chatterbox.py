@@ -42,6 +42,7 @@ import re
 import tempfile
 import threading
 from collections.abc import Iterator
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -139,6 +140,10 @@ MAX_CHARS_PER_CALL = 600
 
 #: Silence inserted between rendered chunks, in seconds.
 CHUNK_GAP_SECONDS = 0.08
+
+#: Leading bytes of a clone embedding written by the conditioning container's
+#: own ``save`` (tensors only).  A blob without it is the legacy pickle format.
+CONDS_EMBEDDING_MAGIC = b"CBXCONDS1\n"
 
 #: Measured compute-cost advisory, published in ``/api/tts/capabilities``.
 #:
@@ -1189,9 +1194,14 @@ class ChatterboxEngine:
         resolves only while the clone store says it is active, and rendering it
         requires the stored embedding.  A clone that is not active is refused
         rather than silently rendered with the model's default speaker.
+
+        A named voice is resolved through the single-id registry lookup only.
+        :meth:`_records` lists every active clone, and each listing reads and
+        verifies every clone's consent record, so it is consulted only when no
+        voice was named and the default has to be chosen.
         """
-        records = self._records()
         if voice_id is None:
+            records = self._records()
             if not records:
                 raise UnknownVoiceError(
                     "No Chatterbox voice is registered for variant "
@@ -1648,7 +1658,8 @@ class ChatterboxCloneBackend:
         leaves ``model.conds`` pointing at the subject, which would otherwise
         become the default speaker for every later pack-voice render.
         """
-        torch = self._torch()
+        # Fail with the actionable dependency error before touching the model.
+        self._torch()
         model = self._model()
         data, sample_rate = sf.read(io.BytesIO(audio), dtype="float32", always_2d=True)
         mono = data.mean(axis=1) if data.ndim > 1 else data
@@ -1667,13 +1678,95 @@ class ChatterboxCloneBackend:
                     prepare(str(clip_path), exaggeration=EXAGGERATION_NEUTRAL)
                     if getattr(model, "conds", None) is None:  # pragma: no cover - upstream API
                         raise ChatterboxError("Chatterbox produced no speaker conditioning.")
-                    buffer = io.BytesIO()
-                    torch.save(model.conds, buffer)
-                    return buffer.getvalue()
+                    return self._serialise_conds(model.conds)
                 finally:
                     # The subject's conditioning is a borrowed value, not this
                     # model's state.  Restore it even when extraction failed.
                     model.conds = previous
+
+    # -- embedding serialisation -----------------------------------------
+    #
+    # The embedding is the conditioning container's *tensors*, written by the
+    # container's own ``save`` and read back by its own ``load``.  In
+    # chatterbox-tts that pair is ``Conditionals.save`` / ``Conditionals.load``:
+    # a plain dict of tensors, reloaded with ``torch.load(weights_only=True)`` —
+    # the same path the library uses for its shipped ``conds.pt``.  The first
+    # SPEECH-006 release pickled the whole container and reloaded it with
+    # ``weights_only=False``, which executes arbitrary pickle opcodes: anyone able
+    # to write an embedding file (and holding the reference key) got code
+    # execution on the next render.  No path here unpickles with
+    # ``weights_only=False``.
+
+    @staticmethod
+    def _serialise_conds(conds) -> bytes:
+        save = getattr(conds, "save", None)
+        if not callable(save):
+            raise ChatterboxError(
+                "The installed Chatterbox build's speaker conditioning has no save(); "
+                "it cannot be persisted without pickling arbitrary objects, so cloning "
+                "is unavailable on this build."
+            )
+        buffer = io.BytesIO()
+        save(buffer)
+        return CONDS_EMBEDDING_MAGIC + buffer.getvalue()
+
+    def _conds_class(self, model):
+        """The conditioning container class for the loaded variant."""
+        current = getattr(model, "conds", None)
+        if current is not None and callable(getattr(type(current), "load", None)):
+            return type(current)
+        module_name, _class_name = VARIANT_BACKENDS.get(
+            self._engine.variant, VARIANT_BACKENDS["standard"]
+        )
+        try:
+            module = __import__(module_name, fromlist=["Conditionals"])
+            return module.Conditionals
+        except (ImportError, AttributeError) as exc:  # pragma: no cover - upstream API
+            raise ChatterboxDependencyError(
+                f"{module_name}.Conditionals is unavailable, so a stored clone embedding "
+                "cannot be loaded."
+            ) from exc
+
+    def _deserialise_conds(self, torch, model, embedding: bytes):
+        """Rebuild a conditioning container without unrestricted unpickling."""
+        if embedding.startswith(CONDS_EMBEDDING_MAGIC):
+            conds_class = self._conds_class(model)
+            loaded = conds_class.load(
+                io.BytesIO(embedding[len(CONDS_EMBEDDING_MAGIC) :]), map_location="cpu"
+            )
+        else:
+            loaded = self._load_legacy_conds(torch, model, embedding)
+        to_device = getattr(loaded, "to", None)
+        if callable(to_device):
+            loaded = to_device(self._engine.device)
+        return loaded
+
+    def _load_legacy_conds(self, torch, model, embedding: bytes):
+        """Load an embedding written by the first SPEECH-006 release.
+
+        Those blobs are a pickle of the whole container.  They are read with
+        ``weights_only=True``, allow-listing exactly the container classes the
+        loaded model already uses, so nothing outside that set can be built.  A
+        blob that does not load that way is refused with a clear error; it is
+        never retried with ``weights_only=False``.
+        """
+        current = getattr(model, "conds", None)
+        allowed = [type(current)] if current is not None else []
+        t3 = getattr(current, "t3", None)
+        if t3 is not None:
+            allowed.append(type(t3))
+        serialization = getattr(torch, "serialization", None)
+        safe_globals = getattr(serialization, "safe_globals", None)
+        guard = safe_globals(allowed) if callable(safe_globals) and allowed else nullcontext()
+        try:
+            with guard:
+                return torch.load(io.BytesIO(embedding), map_location="cpu", weights_only=True)
+        except Exception as exc:
+            raise ChatterboxError(
+                "This clone's embedding was written in the legacy pickle format and could "
+                "not be loaded safely (weights_only=True). Re-create the clone from a new "
+                "reference clip with the consent flow."
+            ) from exc
 
     def render(
         self, text: str, embedding: bytes, *, exaggeration: float
@@ -1691,11 +1784,7 @@ class ChatterboxCloneBackend:
         with self._engine.model_guard:
             previous = getattr(model, "conds", None)
             try:
-                # Trusted, locally produced bytes.  ``weights_only=False`` is
-                # required to reconstruct the conditioning container in torch 2.6.
-                model.conds = torch.load(
-                    io.BytesIO(embedding), map_location="cpu", weights_only=False
-                )
+                model.conds = self._deserialise_conds(torch, model, embedding)
                 samples = _to_numpy(model.generate(text, **kwargs))
             finally:
                 model.conds = previous

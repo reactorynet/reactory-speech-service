@@ -75,7 +75,8 @@ Copy `.env.example` to `.env` and customize:
 | `CLONE_SIGNING_KEY_PATH` | `data/keys/clone_signing_key.pem` | Ed25519 key for consent records and provenance manifests. Never generated at boot |
 | `CLONE_REFERENCE_KEY_PATH` | `data/keys/clone_reference.key` | 32-byte AES-256-GCM key for reference audio, separate from application data |
 | `CLONE_STORE_DIR` | `data/clones` | Consent records, encrypted embeddings, manifest registry and audit log |
-| `CLONE_INSTANCE_ID` | hostname | Instance identity carried inside every signature |
+| `CLONE_INSTANCE_ID` | `key-<fingerprint>` | Instance identity carried inside every signature (defaults to the signing key's fingerprint) |
+| `CLONE_PRINCIPAL_HEADER` | *(empty)* | Gateway header naming the authenticated caller; when set, the consent approver must equal it |
 
 ## API
 
@@ -89,8 +90,8 @@ Cloning is unavailable unless the deployment supplies an approver allowlist and
 its own signing/reference keys; it fails closed. Full guide:
 [`docs/voices/voice-cloning.md`](docs/voices/voice-cloning.md).
 
-- `POST /api/tts/voices/clone` — multipart reference clip + structured consent record
-- `GET /api/tts/voices/{id}/consent` — consent record and whether its instance signature verifies
+- `POST /api/tts/voices/clone` — multipart reference clip + structured consent record; **internal-only** unless `CLONE_PRINCIPAL_HEADER` binds the approver to the authenticated caller
+- `GET /api/tts/voices/{id}/consent` — consent record (subject name and evidence redacted) and whether its instance signature verifies
 - `POST /api/tts/voices/{id}/takedown` — **internal-only** (behind the authorising gateway); immediate, no redeploy
 - `DELETE /api/tts/voices/{id}?requestedBy=...&reason=...` — removes audio, embedding and registry entry
 - `POST /api/tts/provenance/verify` / `GET /api/tts/provenance/{audioSha256}` — manifest lookup; a miss is `no record found`, never `not ours`

@@ -40,7 +40,8 @@ python scripts/generate_clone_keys.py --output-dir data
 | `CLONE_SIGNING_KEY_PATH` | `data/keys/clone_signing_key.pem` | Ed25519 key signing consent records and manifests. Never generated at boot. |
 | `CLONE_REFERENCE_KEY_PATH` | `data/keys/clone_reference.key` | 32 bytes for AES-256-GCM, separate from ordinary application data. |
 | `CLONE_STORE_DIR` | `data/clones` | Consent records, encrypted embeddings, manifest registry, audit log. |
-| `CLONE_INSTANCE_ID` | hostname | Recorded inside every signature payload. |
+| `CLONE_INSTANCE_ID` | `key-<fingerprint>` | Recorded inside every signature payload. Defaults to the signing key's fingerprint, which survives redeploys. |
+| `CLONE_PRINCIPAL_HEADER` | *(empty)* | Header in which the authorising gateway names the authenticated caller. When set, the consent `approver` must equal it and it is recorded as the creator. Empty: the approver is a request-body assertion, so the clone endpoints must only be reachable through the gateway. |
 
 All four paths are in `.gitignore`. A regenerated signing key invalidates every
 existing consent record and manifest — rotate deliberately, never implicitly.
@@ -70,7 +71,27 @@ Refusals:
 * `403` — the approver is not in this deployment's allowlist. There is no
   separate self-approval path: self-approval works only because the same
   allowlist check applies.
-* `503` — cloning is not configured on this instance.
+* `403` — with `CLONE_PRINCIPAL_HEADER` set: the header is missing, or the
+  consent `approver` is not the authenticated caller it names.
+* `413` — the reference clip is larger than 25 MB (refused while reading, not
+  after buffering the whole body).
+* `503` — cloning is not configured on this instance, or the cloning engine
+  could not be loaded. The engine is loaded on demand, exactly as a synthesis
+  would load it, so a freshly started node can clone without a warm-up render.
+
+**The approver is only as trustworthy as the caller.** Without
+`CLONE_PRINCIPAL_HEADER` the approver is whatever the request body says, so
+`POST /api/tts/voices/clone` must be reachable only through the authorising
+gateway, like takedown. With the header configured, the approver must submit
+the request themselves and the allowlist check runs against the identity the
+gateway authenticated.
+
+Clone ids are random (`clone_<16 hex>`) and the default display name is
+`Cloned voice <suffix>`: the subject's name stays in the consent record only,
+because the id is copied into every provenance manifest, audit line and log
+line. `GET /api/tts/voices/{id}/consent` withholds `subjectName` and `evidence`
+(`redactedFields`) and returns 404 once the clone is deleted; the full record
+stays on disk as chain of custody.
 
 `scope` is **recorded, not enforced**. The service cannot tell a customer from an
 operator, so there is no role check anywhere in the clone path.
@@ -100,13 +121,18 @@ Clones use the ordinary endpoint with no special case:
 ```bash
 curl -sS -X POST http://localhost:8765/api/tts/synthesize/json \
   -H 'content-type: application/json' \
-  -d '{"text": "Hi Vin, welcome back.", "voice": "clone_vin_1a2b3c4d"}'
+  -d '{"text": "Hi Vin, welcome back.", "voice": "clone_3f9a0c1e7b2d4a68"}'
 ```
 
 The JSON body carries `provenance`; the WAV response carries
 `X-Provenance-Id` (the registry key) plus `X-Provenance-Lookup`. Cloned voices are
 rendered as complete buffers: the streaming endpoint refuses them rather than
 streaming a substitute voice.
+
+Clone renders are cached in memory only, never in the disk tier, and takedown or
+deletion evicts them, so no audio in a withdrawn voice remains at rest. Renders
+cached to disk by the first SPEECH-006 release are not tracked; clear the cache
+directory once after upgrading if clones were rendered on that release.
 
 ## Provenance verification
 
@@ -122,7 +148,10 @@ made.
 
 The manifest registry is a durable store. Its retention is deliberately **not**
 bounded by the 90-day reference ceiling: a manifest records that a *file was
-made* and must outlive the voice.
+made* and must outlive the voice. It is an append-only log
+(`manifests.jsonl`, one signed manifest per line) so recording a render costs the
+same however many files came before it; a `manifests.json` written by the first
+release is still read.
 
 States: `verified`, `signature invalid`, `verification unavailable`,
 **`no record found`**. The last is not a statement about ownership.
@@ -134,7 +163,7 @@ authorising gateway. The service cannot model privilege; it executes the
 assertion it is given and records who, when and why.
 
 ```bash
-curl -sS -X POST http://localhost:8765/api/tts/voices/clone_vin_1a2b3c4d/takedown \
+curl -sS -X POST http://localhost:8765/api/tts/voices/clone_3f9a0c1e7b2d4a68/takedown \
   -H 'content-type: application/json' \
   -d '{"requestedBy": "gateway:takedown-service", "reason": "subject request"}'
 ```

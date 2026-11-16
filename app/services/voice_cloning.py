@@ -27,8 +27,6 @@ from __future__ import annotations
 
 import io
 import logging
-import re
-import socket
 import threading
 import time
 import uuid
@@ -245,14 +243,19 @@ def build_identity(settings_obj: Any = settings) -> InstanceIdentity | None:
             exc,
         )
         return None
+    key_fingerprint = clone_crypto.fingerprint(private_key)
+    # The default identity is the signing key, not the host.  A container's or
+    # pod's hostname changes on every redeploy, so records signed by the same key
+    # (the same instance, as far as verification is concerned) would otherwise
+    # carry a different ``instanceId`` after each release.
     instance_id = (
         str(getattr(settings_obj, "clone_instance_id", "") or "").strip()
-        or socket.gethostname()
+        or f"key-{key_fingerprint}"
     )
     return InstanceIdentity(
         instance_id=instance_id,
         private_key=private_key,
-        key_fingerprint=clone_crypto.fingerprint(private_key),
+        key_fingerprint=key_fingerprint,
     )
 
 
@@ -300,6 +303,26 @@ _backend_resolver: Callable[[], CloneBackend | None] | None = None
 def set_clone_backend_resolver(resolver: Callable[[], CloneBackend | None] | None) -> None:
     global _backend_resolver
     _backend_resolver = resolver
+
+
+_render_evictor: Callable[[str], int] | None = None
+
+
+def set_clone_render_evictor(evictor: Callable[[str], int] | None) -> None:
+    """Register how cached renders of a clone are evicted (set by TTSService)."""
+    global _render_evictor
+    _render_evictor = evictor
+
+
+def _evict_renders(voice_id: str) -> None:
+    """Drop cached renders of a withdrawn clone.  Never raises."""
+    evictor = _render_evictor
+    if evictor is None:
+        return
+    try:
+        evictor(voice_id)
+    except Exception:  # pragma: no cover - eviction must not block a takedown
+        logger.warning("Could not evict cached renders of a withdrawn clone.", exc_info=True)
 
 
 def _resolve_backend() -> CloneBackend | None:
@@ -361,6 +384,14 @@ class VoiceCloneService:
             identity=self.identity,
             reference_key=self._reference_key,
         )
+
+    def require_available(self) -> CloneAvailability:
+        """Raise :class:`CloningUnavailableError` unless cloning is configured.
+
+        Cheap (no model, no audio), so the HTTP layer calls it before loading the
+        cloning engine for a request that would be refused anyway.
+        """
+        return self._require_available()
 
     def _require_available(self) -> CloneAvailability:
         state = self.availability()
@@ -628,12 +659,26 @@ class VoiceCloneService:
         retain_reference: bool = False,
         retention_reason: str | None = None,
         retention_days: int | None = None,
+        authenticated_principal: str | None = None,
     ) -> dict[str, Any]:
         """Create a clone from a reference clip plus a structured consent record.
 
         Every refusal names the field or rule that caused it.  Nothing is written
         until the approver, the scope and the expiry have all been checked.
+
+        ``authenticated_principal`` is the caller identity asserted by the
+        authorising gateway (``CLONE_PRINCIPAL_HEADER``).  When it is supplied the
+        approver must *be* that principal and it is recorded as the creator, so
+        the allowlist check is made against an authenticated identity instead of
+        a free-text field anyone can fill in.  Without it the approver is only
+        what the request body says, which is why the endpoint is internal-only.
         """
+        principal = str(authenticated_principal or "").strip()
+        if authenticated_principal is not None and not principal:
+            raise ApproverNotAllowedError(
+                "The authorising gateway did not identify the caller; clone creation "
+                "requires an authenticated principal on this deployment."
+            )
         self._require_available()
         approvers = self.approvers
 
@@ -676,6 +721,14 @@ class VoiceCloneService:
             )
 
         approver = str(consent["approver"]).strip().lower()
+        if principal and approver != principal.lower():
+            raise ApproverNotAllowedError(
+                "The approver named in the consent record is not the authenticated "
+                "caller. On this deployment the approver must submit the clone request "
+                "themselves, so the approval is bound to an authenticated identity."
+            )
+        if principal:
+            created_by = principal
         if approver not in approvers:
             # Deliberately a refusal, not a warning (ADR-0003 #1).  Self-approval
             # needs no special path: the same allowlist check applies.
@@ -703,7 +756,7 @@ class VoiceCloneService:
             retention_days=retention_days,
             now=now,
         )
-        voice_id = self._allocate_id(str(consent["subjectName"]))
+        voice_id = self._allocate_id()
         consent_id = f"consent_{uuid.uuid4().hex[:16]}"
 
         # Encrypted at rest *before* extraction touches it, so a crash never
@@ -754,7 +807,10 @@ class VoiceCloneService:
             tags.append("reference-retained")
         entry: dict[str, Any] = {
             "id": voice_id,
-            "name": str(consent.get("name") or f"{consent['subjectName']} (cloned)"),
+            # The subject's name stays in the consent record only.  The display name
+            # is listed by /voices and the id travels into every provenance
+            # manifest (kept indefinitely), every audit line and every log line.
+            "name": str(consent.get("name") or f"Cloned voice {voice_id[-8:]}"),
             "engine": "chatterbox",
             "variant": str(getattr(settings, "chatterbox_variant", self._variant)),
             "language": "en-US",
@@ -825,11 +881,10 @@ class VoiceCloneService:
             "deleteAt": format_timestamp(now + effective * 86400),
         }
 
-    def _allocate_id(self, subject_name: str) -> str:
-        slug = re.sub(r"[^a-z0-9]+", "-", subject_name.strip().lower()).strip("-") or "voice"
-        slug = slug[:24].strip("-") or "voice"
+    def _allocate_id(self) -> str:
+        """A random clone id that carries nothing about the subject."""
         for _ in range(16):
-            candidate = f"{CLONE_ID_PREFIX}{slug}_{uuid.uuid4().hex[:8]}"
+            candidate = f"{CLONE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
             if self.store.get(candidate) is None:
                 return candidate
         raise CloningUnavailableError("Could not allocate a unique clone id.")  # pragma: no cover
@@ -1029,6 +1084,7 @@ class VoiceCloneService:
             raise CloneNotFoundError(f"Unknown clone '{voice_id}'.")
         requested_by, reason = _require_actor_and_reason(requested_by, reason)
         self.store.delete_artefacts(voice_id, _preview_dir())
+        _evict_renders(voice_id)
         updated = self.store.update(
             voice_id,
             enabled=False,
@@ -1058,6 +1114,7 @@ class VoiceCloneService:
             raise CloneNotFoundError(f"Unknown clone '{voice_id}'.")
         requested_by, reason = _require_actor_and_reason(requested_by, reason)
         self.store.delete_artefacts(voice_id, _preview_dir())
+        _evict_renders(voice_id)
         self.store.remove(voice_id)
         self.store.audit(
             "delete",
@@ -1223,4 +1280,5 @@ __all__ = [
     "log_startup_status",
     "reset_clone_service",
     "set_clone_backend_resolver",
+    "set_clone_render_evictor",
 ]

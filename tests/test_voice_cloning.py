@@ -760,9 +760,15 @@ def test_tampering_with_a_stored_manifest_is_reported_as_an_invalid_signature():
     _audio, manifest = _rendered_manifest(service, descriptor)
     digest = manifest["audioSha256"]
 
-    payload = json.loads(service.store._manifests_path.read_text(encoding="utf-8"))
-    payload["manifests"][digest]["voiceId"] = "clone_someone_else"
-    service.store._manifests_path.write_text(json.dumps(payload), encoding="utf-8")
+    log_path = service.store._manifests_path
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    tampered = []
+    for line in lines:
+        record = json.loads(line)
+        if record["audioSha256"] == digest:
+            record["voiceId"] = "clone_someone_else"
+        tampered.append(json.dumps(record))
+    log_path.write_text("\n".join(tampered) + "\n", encoding="utf-8")
     service.store.load()
 
     result = service.lookup_by_digest(digest)
@@ -1886,3 +1892,245 @@ def test_synthesis_with_a_traversal_voice_id_does_not_touch_the_filesystem():
 
     # Nothing to render and nothing to leak: a 4xx, never a 5xx from a failed read.
     assert 400 <= response.status_code < 500, response.text
+
+# ---------------------------------------------------------------------------
+# Review follow-ups (post-merge fixes)
+# ---------------------------------------------------------------------------
+
+
+class _LoopAwareBackend(FakeCloneBackend):
+    """Records whether extraction ran on a thread with a running event loop."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.extracted_on_event_loop: bool | None = None
+
+    def extract_embedding(self, audio: bytes) -> bytes:
+        try:
+            asyncio.get_running_loop()
+            self.extracted_on_event_loop = True
+        except RuntimeError:
+            self.extracted_on_event_loop = False
+        return super().extract_embedding(audio)
+
+
+def test_clone_creation_loads_the_engine_and_runs_off_the_event_loop():
+    """A cold node can clone; extraction never blocks the event loop."""
+    tts = _tts_service_with_chatterbox()
+    engine = tts._chatterbox_engine
+    renderer = _LoopAwareBackend()
+    # Cold, lazily loaded engine: no backend until something loads the model.
+    engine.model = None
+    engine.set_ready(False)
+    engine.clone_backend = lambda: renderer if engine.model is not None else None  # type: ignore[method-assign]
+    loads: list[int] = []
+
+    def load() -> None:
+        loads.append(1)
+        engine.model = _FakeModel()
+        engine.set_ready(True)
+
+    engine.load = load  # type: ignore[method-assign]
+    engine.preflight = lambda: None  # type: ignore[method-assign]  # weights "present"
+    service = _make_service(backend=None)
+    service._backend_resolver = tts._clone_backend
+    client = _client(tts)
+
+    response = _post_clone(client, _consent(approver="approver@example.com"))
+
+    assert response.status_code == 201, response.text
+    assert loads == [1], "the cloning engine was not loaded on demand"
+    assert renderer.extract_calls == 1
+    assert renderer.extracted_on_event_loop is False
+
+
+def test_an_unconfigured_deployment_is_refused_before_the_engine_loads(tmp_path):
+    tts = _tts_service_with_chatterbox()
+    engine = tts._chatterbox_engine
+    engine.model = None
+    engine.set_ready(False)
+    loads: list[int] = []
+    engine.load = lambda: loads.append(1)  # type: ignore[method-assign]
+    engine.preflight = lambda: loads.append(0)  # type: ignore[method-assign]
+    _make_service(backend=FakeCloneBackend(), approvers_path=tmp_path / "absent.json")
+    client = _client(tts)
+
+    response = _post_clone(client, _consent())
+
+    assert response.status_code == 503, response.text
+    assert loads == [], "a request that cannot succeed loaded a multi-gigabyte model"
+
+
+def test_clone_ids_and_display_names_do_not_carry_the_subject_name():
+    backend = FakeCloneBackend()
+    service = _make_service(backend=backend)
+    descriptor = _create(service, backend, consent={"subjectName": "Jane Doe"})
+
+    assert "jane" not in descriptor["id"].lower()
+    assert "doe" not in descriptor["id"].lower()
+    assert "Jane" not in descriptor["name"]
+    _rendered_manifest(service, descriptor)
+    raw_audit = service.store._audit_path.read_text(encoding="utf-8")
+    raw_manifests = service.store._manifests_path.read_text(encoding="utf-8")
+    assert "Jane" not in raw_audit and "jane" not in raw_audit
+    assert "Jane" not in raw_manifests and "jane" not in raw_manifests
+    # The consent record itself still names the subject: that is its purpose.
+    assert service.consent_record(descriptor["id"])["record"]["subjectName"] == "Jane Doe"
+
+
+def test_the_consent_endpoint_withholds_the_subject_and_is_gone_after_delete():
+    client, backend = _http_harness()
+    created = _post_clone(client, _consent(subjectName="Jane Doe"))
+    assert created.status_code == 201, created.text
+    voice_id = created.json()["id"]
+
+    response = client.get(f"/api/tts/voices/{voice_id}/consent")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["signatureValid"] is True
+    assert body["record"]["subjectName"] == "[redacted]"
+    assert body["record"]["evidence"] == "[redacted]"
+    assert sorted(body["redactedFields"]) == ["evidence", "subjectName"]
+    assert "Jane" not in response.text
+
+    deleted = client.delete(
+        f"/api/tts/voices/{voice_id}",
+        params={"requestedBy": "gateway:dsar", "reason": "subject request"},
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert client.get(f"/api/tts/voices/{voice_id}/consent").status_code == 404
+
+
+async def test_clone_renders_never_reach_the_disk_cache_and_takedown_evicts_them():
+    backend = FakeCloneBackend()
+    clone_service = _make_service(backend=backend)
+    tts = _tts_service_with_chatterbox()
+    descriptor = _create(clone_service, backend)
+
+    first = await tts.synthesize_async(CLONE_TEXT, voice=descriptor["id"])
+    assert first.cache == "miss"
+    key = first.cache_key
+    assert key in tts.cache.lru.entries
+    cache_dir = Path(settings.speech_cache_dir)
+    on_disk = [path for path in cache_dir.rglob("*") if path.is_file()] if cache_dir.exists() else []
+    assert on_disk == [], "a clone render was written to the disk cache tier"
+
+    clone_service.takedown(
+        descriptor["id"], requested_by="gateway:takedown", reason="subject request"
+    )
+
+    assert key not in tts.cache.lru.entries, "takedown left the render cached"
+
+
+async def test_deleting_a_clone_evicts_its_cached_renders():
+    backend = FakeCloneBackend()
+    clone_service = _make_service(backend=backend)
+    tts = _tts_service_with_chatterbox()
+    descriptor = _create(clone_service, backend)
+    outcome = await tts.synthesize_async(CLONE_TEXT, voice=descriptor["id"])
+    assert outcome.cache_key in tts.cache.lru.entries
+
+    clone_service.delete(descriptor["id"], requested_by="gateway:dsar", reason="erasure")
+
+    assert outcome.cache_key not in tts.cache.lru.entries
+
+
+def test_a_configured_principal_header_binds_the_approver(monkeypatch):
+    monkeypatch.setattr(settings, "clone_principal_header", "X-Authenticated-User")
+    client, _backend = _http_harness()
+
+    missing = _post_clone(client, _consent())
+    assert missing.status_code == 403, missing.text
+    assert "authenticated principal" in missing.json()["detail"]
+
+    impersonated = client.post(
+        "/api/tts/voices/clone",
+        files={"reference_audio": ("reference.wav", _wav_bytes(), "audio/wav")},
+        data={"consent": json.dumps(_consent()), "created_by": "creator@example.com"},
+        headers={"X-Authenticated-User": "someone.else@example.com"},
+    )
+    assert impersonated.status_code == 403, impersonated.text
+    assert "not the authenticated caller" in impersonated.json()["detail"]
+
+    accepted = client.post(
+        "/api/tts/voices/clone",
+        files={"reference_audio": ("reference.wav", _wav_bytes(), "audio/wav")},
+        data={"consent": json.dumps(_consent()), "created_by": "spoofed@example.com"},
+        headers={"X-Authenticated-User": "Approver@Example.com"},
+    )
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["created_by"] == "Approver@Example.com"
+
+
+def test_without_a_principal_header_the_approver_is_the_request_assertion():
+    """Default behaviour is unchanged: the endpoint must sit behind the gateway."""
+    client, _backend = _http_harness()
+
+    response = _post_clone(client, _consent())
+
+    assert response.status_code == 201, response.text
+
+
+def test_the_default_instance_id_is_the_signing_key_fingerprint(monkeypatch):
+    monkeypatch.setattr(settings, "clone_instance_id", "")
+
+    identity = build_identity(settings)
+
+    assert identity is not None
+    assert identity.instance_id == f"key-{identity.key_fingerprint}"
+
+
+def test_manifests_are_appended_and_a_legacy_registry_is_still_read():
+    backend = FakeCloneBackend()
+    service = _make_service(backend=backend)
+    descriptor = _create(service, backend)
+    _audio, first = _rendered_manifest(service, descriptor)
+    second = service.record_synthesis(
+        descriptor["id"],
+        _wav_bytes(np.full(2400, 0.3, dtype=np.float32)),
+        text_length=10,
+        engine="chatterbox",
+    )
+
+    lines = service.store._manifests_path.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["audioSha256"] for line in lines] == [
+        first["audioSha256"],
+        second["audioSha256"],
+    ]
+
+    legacy_audio = _wav_bytes(np.full(2400, 0.6, dtype=np.float32))
+    legacy = provenance.build_manifest(
+        private_key=service.identity.private_key,
+        audio=legacy_audio,
+        voice_id=descriptor["id"],
+        consent_id=descriptor["consent_id"],
+        instance_id=service.identity.instance_id,
+        created_at=format_timestamp(T0),
+    )
+    service.store._legacy_manifests_path.write_text(
+        json.dumps({"schema_version": 1, "manifests": {legacy["audioSha256"]: legacy}}),
+        encoding="utf-8",
+    )
+    service.store.load()
+
+    assert service.lookup_provenance(legacy_audio)["status"] == provenance.VERIFIED_STATUS
+    assert service.lookup_by_digest(first["audioSha256"])["status"] == provenance.VERIFIED_STATUS
+
+
+def test_a_torn_last_manifest_line_does_not_swallow_the_next_record():
+    backend = FakeCloneBackend()
+    service = _make_service(backend=backend)
+    descriptor = _create(service, backend)
+    _rendered_manifest(service, descriptor)
+    with service.store._manifests_path.open("a", encoding="utf-8") as handle:
+        handle.write('{"audioSha256": "torn')  # a crash mid-append
+
+    later = service.record_synthesis(
+        descriptor["id"],
+        _wav_bytes(np.full(2400, 0.5, dtype=np.float32)),
+        text_length=5,
+        engine="chatterbox",
+    )
+    service.store.load()
+
+    assert service.lookup_by_digest(later["audioSha256"])["status"] == provenance.VERIFIED_STATUS

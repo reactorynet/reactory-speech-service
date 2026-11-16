@@ -24,9 +24,12 @@ Two entry points exist on purpose:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterable, Iterator
+import threading
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 import numpy as np
 
@@ -50,6 +53,7 @@ from app.services.phonetic_converter import phonetic_converter
 from app.services.synthesis_cache import CacheEntry, SynthesisCache, build_cache_key
 from app.services.voice_design import default_direction
 from app.services.voice_cloning import (
+    CloneBackendUnavailable,
     CloneInactiveError,
     CloneSynthesisContext,
     CloningUnavailableError,
@@ -65,6 +69,8 @@ from app.services.voice_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 #: Native output sample rate of the loaded Kokoro model, in Hz.
 SAMPLE_RATE = KOKORO_SAMPLE_RATE
@@ -155,6 +161,12 @@ class TTSService:
         from app.services import voice_cloning as _voice_cloning
 
         _voice_cloning.set_clone_backend_resolver(self._clone_backend)
+        #: Cache keys of clone renders, per clone, so a takedown or deletion can
+        #: evict them.  Clone renders never reach the disk tier, so a process
+        #: restart (which empties the in-memory tier) cannot orphan any.
+        self._clone_render_keys: dict[str, set[str]] = {}
+        self._clone_render_lock = threading.Lock()
+        _voice_cloning.set_clone_render_evictor(self._evict_clone_renders)
 
     # ------------------------------------------------------------------
     # Backwards-compatible internals
@@ -283,6 +295,40 @@ class TTSService:
                 return backend
         return None
 
+    def _clone_engine(self):
+        """The first registered engine that exposes a clone backend, or ``None``."""
+        for engine in self._manager.engines:
+            if callable(getattr(engine, "clone_backend", None)):
+                return engine
+        return None
+
+    async def run_clone_task(self, func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+        """Run a clone operation (extraction) off the event loop, engine loaded.
+
+        Two things the HTTP handler must not do itself:
+
+        * **Block the event loop.**  Extraction is seconds of CPU work and waits
+          on the engine's ``model_guard``, which a render holds for its whole
+          duration (minutes at RTF 0.13).  Called inline, every other request,
+          health probes included, stalls behind it.
+        * **Assume the engine is resident.**  Chatterbox is lazy-loaded and
+          idle-reaped, so ``clone_backend()`` is ``None`` until something loads
+          it.  The engine is loaded here exactly as a synthesis would load it,
+          inside its concurrency slot so the reaper cannot unload it mid-task.
+        """
+        engine = self._clone_engine()
+        if engine is None:
+            return await self._executor.run(func, *args, **kwargs)
+        limiter = self._manager.limiter(engine.id)
+        async with limiter.slot():
+            try:
+                await self._manager.ensure_loaded(engine.id)
+            except EngineUnavailableError as exc:
+                raise CloneBackendUnavailable(
+                    f"The cloning engine '{engine.id}' could not be loaded: {exc}"
+                ) from exc
+            return await self._executor.run(func, *args, **kwargs)
+
     @staticmethod
     def _clone_context(voice: str | None) -> CloneSynthesisContext | None:
         """Authorise a cloned voice **at request time**.
@@ -309,6 +355,36 @@ class TTSService:
                 f"Voice '{context.voice_id}' was disabled while this request was in "
                 "flight; the render was discarded."
             )
+
+    async def _finish_clone_render(
+        self, context: CloneSynthesisContext | None, audio: bytes, text: str
+    ) -> dict | None:
+        """Re-check a clone after rendering and emit its manifest, off the loop.
+
+        The activity re-check verifies the signed consent record and the manifest
+        write appends to the durable registry with an fsync; neither belongs on
+        the event loop.
+        """
+        if context is None:
+            return None
+
+        def finish() -> dict | None:
+            self._require_clone_still_active(context)
+            return self._record_clone_manifest(context, audio, text)
+
+        return await asyncio.to_thread(finish)
+
+    def _remember_clone_render(self, voice_id: str, key: str) -> None:
+        with self._clone_render_lock:
+            self._clone_render_keys.setdefault(voice_id, set()).add(key)
+
+    def _evict_clone_renders(self, voice_id: str) -> int:
+        """Drop every cached render of one clone (takedown and deletion)."""
+        with self._clone_render_lock:
+            keys = self._clone_render_keys.pop(voice_id, set())
+        for key in keys:
+            self._cache.discard(key)
+        return len(keys)
 
     @staticmethod
     def _record_clone_manifest(
@@ -516,7 +592,12 @@ class TTSService:
         # Cloning is authorised before routing and again before returning audio.
         # An inactive clone must never reach an engine, and a clone must never be
         # substituted with another voice: the subject's voice or nothing.
-        clone_context = self._clone_context(voice)
+        # Authorisation reads and verifies the signed consent record and
+        # decrypts the embedding: file I/O and an Ed25519 verify, so it runs off
+        # the event loop like every other per-request disk access here.
+        clone_context = (
+            await asyncio.to_thread(self._clone_context, voice) if voice else None
+        )
         request = EngineRequest(
             text=text,
             voice=voice,
@@ -563,8 +644,7 @@ class TTSService:
             if use_cache and key is not None:
                 entry = await self._cache.get(key)
                 if entry is not None:
-                    self._require_clone_still_active(clone_context)
-                    manifest = self._record_clone_manifest(
+                    manifest = await self._finish_clone_render(
                         clone_context, entry.audio, text
                     )
                     return SynthesisOutcome(
@@ -609,14 +689,17 @@ class TTSService:
                 ),
                 warnings=[*fallback_notes, *voice_notes, *result.warnings],
             )
-            self._require_clone_still_active(clone_context)
-            manifest = self._record_clone_manifest(clone_context, result.audio, text)
+            manifest = await self._finish_clone_render(clone_context, result.audio, text)
             # A degraded render is never cached.  Caching a fallback made retries
             # serve the substitute engine's audio with ``x-cache: hit``, which hid
             # the degradation and pinned it for the whole TTL (SPEECH-006 known
             # issue).  A clone render must likewise never be a cached fallback.
             degraded = bool(fallback_notes) or voice_substituted
             if use_cache and key is not None and not degraded:
+                # A clone render is the subject's voice.  It is kept in the
+                # in-memory tier only, never written to the disk tier, and its key
+                # is remembered so takedown and deletion can evict it: nothing
+                # rendered in a removed voice may outlive the voice at rest.
                 await self._cache.put(
                     key,
                     CacheEntry(
@@ -625,7 +708,10 @@ class TTSService:
                         sample_rate=result.sample_rate,
                         engine=result.engine,
                     ),
+                    persist=clone_context is None,
                 )
+                if clone_context is not None:
+                    self._remember_clone_render(clone_context.voice_id, key)
             return SynthesisOutcome(
                 audio=result.audio,
                 duration=result.duration,

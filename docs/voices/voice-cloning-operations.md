@@ -28,8 +28,8 @@ That writes the two key files plus a `clone_approvers.json` **template** contain
 array. Note the wording the script prints: *add approver emails before cloning is available*. An
 empty allowlist is the deliberate default, not an oversight.
 
-Useful flags: `--instance-id` sets the id recorded inside signatures (defaults to the hostname at
-runtime), and `--force` overwrites existing keys — which invalidates every consent record and
+Useful flags: `--instance-id` sets the id recorded inside signatures (defaults to `key-<signing key fingerprint>`,
+which survives redeploys; a container hostname does not), and `--force` overwrites existing keys — which invalidates every consent record and
 manifest signature already issued, so it is not a routine operation.
 
 The signing key is deliberately separate from the reference key. A backup or database compromise
