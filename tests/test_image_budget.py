@@ -167,3 +167,31 @@ def _fake_docker_env(tmp_path: Path, size_bytes: str, *, status: int = 0) -> dic
 @pytest.mark.parametrize("path", [SCRIPT, WORKFLOW, ARCHITECTURE])
 def test_the_budget_files_exist(path):
     assert path.is_file(), f"{path} is part of the image-budget contract"
+
+
+def _ci_job(workflow: str, name: str) -> str:
+    """The text of one top-level job in ci.yml (PyYAML is not a dependency)."""
+    match = re.search(rf"^  {re.escape(name)}:\n(.*?)(?=^  \S[^\n]*:\n|\Z)", workflow, re.M | re.S)
+    assert match, f"ci.yml must define the {name} job"
+    return match.group(1)
+
+
+@pytest.mark.parametrize("job", ["image-size", "expressive-deps", "expressive-image"])
+def test_ci_builds_each_image_on_x86_and_arm(job):
+    """Servers deploy on x86_64; developers run podman/docker on Apple Silicon.
+
+    The expressive torch/torchaudio pins differ by architecture, so an x86-only
+    CI would let an arm64 break (or the reverse) merge unnoticed.
+    """
+    block = _ci_job(WORKFLOW.read_text(encoding="utf-8"), job)
+
+    assert "runs-on: ${{ matrix.runner }}" in block
+    assert "runner: ubuntu-latest" in block
+    assert "runner: ubuntu-24.04-arm" in block
+
+
+def test_ci_builds_the_expressive_image_not_only_resolves_it():
+    block = _ci_job(WORKFLOW.read_text(encoding="utf-8"), "expressive-image")
+
+    assert "docker build -f Dockerfile.expressive" in block
+    assert "torch.version.cuda is None" in block

@@ -42,9 +42,25 @@ jobs:
       - name: Test
         run: pytest -v -m "not slow"
 
+  # Both images must build on x86_64 (server deployment) and on aarch64 (Apple
+  # Silicon podman/docker machines). The torch/torchaudio pins differ by
+  # architecture (requirements-expressive.txt), so each one is resolved, built
+  # and smoke-tested on a runner of that architecture.
   expressive-deps:
-    name: speech-expressive requirements resolve
-    runs-on: ubuntu-latest
+    name: speech-expressive requirements resolve (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            # Only the +cpu build keeps CUDA out on x86_64.
+            torch: torch-2.6.0+cpu
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            # Either 2.6.0+cpu or plain 2.6.0: both are CPU-only on aarch64.
+            torch: torch-2.6.0
     steps:
       - uses: actions/checkout@v7
 
@@ -77,11 +93,47 @@ jobs:
           if grep -q "^Would install.* nvidia-" /tmp/resolve.log; then
             echo "FAIL: CUDA packages resolved into the expressive profile"; exit 1
           fi
-          grep -q "torch-2.6.0+cpu" /tmp/resolve.log
+          grep -q "${{ matrix.torch }}" /tmp/resolve.log
+
+  expressive-image:
+    name: speech-expressive image builds (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the speech-expressive image
+        run: docker build -f Dockerfile.expressive -t reactory-speech-service:speech-expressive .
+
+      # Resolving is not installing: prove the wheels that landed import on this
+      # architecture, and that the torch inside is a CPU-only build.
+      - name: Smoke-test the engines inside the image
+        run: |
+          docker run --rm reactory-speech-service:speech-expressive python -c "
+          import platform, torch, torchaudio, chatterbox.tts, kokoro_onnx, faster_whisper
+          assert platform.machine() == '${{ matrix.arch }}', platform.machine()
+          assert torch.version.cuda is None, torch.version.cuda
+          print(platform.machine(), 'torch', torch.__version__, 'torchaudio', torchaudio.__version__)
+          "
 
   image-size:
-    name: speech-core image size
-    runs-on: ubuntu-latest
+    name: speech-core image size (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
 
