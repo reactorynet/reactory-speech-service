@@ -37,6 +37,13 @@ make docker-build
 make docker-run
 ```
 
+Both images (speech-core and the optional speech-expressive) build natively on
+**x86_64** (server deployment) and **arm64** (podman/docker machines on Apple
+Silicon); build on the architecture you deploy to. CI builds each image on both
+architectures. The only architecture-specific pins are torch/torchaudio in
+`requirements-expressive.txt`: `2.6.0+cpu` on x86_64, where the plain wheels
+pull in CUDA, and plain `2.6.0` on arm64, where they are already CPU-only.
+
 ### Restricted networks: offline model bundle
 
 The image build downloads Kokoro from GitHub and the Whisper weights from

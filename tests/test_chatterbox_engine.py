@@ -972,8 +972,8 @@ def test_expressive_requirements_pin_the_documented_dependency_traps():
     # Asserting the pinned versions (not merely that "torch" appears) is what
     # would have caught the rejected torch==2.5.1+cpu pin: that string satisfied
     # a substring check while making the image uninstallable.
-    assert "torch==2.6.0+cpu" in expressive
-    assert "torchaudio==2.6.0+cpu" in expressive
+    assert 'torch==2.6.0+cpu; platform_machine == "x86_64"' in expressive
+    assert 'torchaudio==2.6.0+cpu; platform_machine == "x86_64"' in expressive
     assert "download.pytorch.org/whl/cpu" in expressive
     assert "chatterbox" not in default.lower()
     assert "torch" not in default.lower()
@@ -990,19 +990,46 @@ def test_the_expressive_pins_satisfy_chatterboxs_own_requirement():
     from packaging.version import Version
 
     expressive = (REPO_ROOT / "requirements-expressive.txt").read_text(encoding="utf-8")
-    pins = {
-        line.split("==")[0]: line.split("==")[1]
-        for line in expressive.splitlines()
-        if "==" in line and not line.lstrip().startswith("#")
-    }
+    pins: dict[str, list[Requirement]] = {}
+    for line in expressive.splitlines():
+        if "==" in line and not line.lstrip().startswith(("#", "-")):
+            pin = Requirement(line)
+            pins.setdefault(pin.name, []).append(pin)
 
     for package in ("torch", "torchaudio"):
         assert package in pins, f"{package} must be pinned explicitly"
         requirement = Requirement(f"{package}==2.6.0")  # chatterbox-tts 0.1.7's pin
-        assert Version(pins[package]) in requirement.specifier, (
-            f"{package}=={pins[package]} does not satisfy chatterbox-tts 0.1.7's "
-            f"{requirement}"
+        for pin in pins[package]:
+            (version,) = (spec.version for spec in pin.specifier)
+            assert Version(version) in requirement.specifier, (
+                f"{pin} does not satisfy chatterbox-tts 0.1.7's {requirement}"
+            )
+
+
+@pytest.mark.parametrize("package", ["torch", "torchaudio"])
+@pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
+def test_every_linux_architecture_gets_exactly_one_torch_pin(package: str, machine: str):
+    """The image builds on amd64 CI and on arm64 podman/docker machines.
+
+    torchaudio publishes ``2.6.0+cpu`` only for x86_64; on aarch64 the plain
+    ``2.6.0`` wheels are CPU-only already. No pin for an architecture leaves the
+    version floating there; two pins that both apply cannot both be met.
+    """
+    from packaging.requirements import Requirement
+
+    expressive = (REPO_ROOT / "requirements-expressive.txt").read_text(encoding="utf-8")
+    environment = {"platform_machine": machine, "sys_platform": "linux"}
+    active = [
+        Requirement(line)
+        for line in expressive.splitlines()
+        if line.split("==")[0] == package
+        and (
+            Requirement(line).marker is None
+            or Requirement(line).marker.evaluate(environment)
         )
+    ]
+
+    assert len(active) == 1, f"{machine}: {[str(r) for r in active]}"
 
 
 def test_registry_entries_carry_mit_licence_and_attribution():

@@ -52,8 +52,18 @@ chatterbox-tts==0.1.7
 # uv resolves indexes with a "first index wins" policy; verify with
 #     uv pip compile requirements-expressive.txt --python-version 3.13 \
 #         --python-platform x86_64-unknown-linux-gnu --index-strategy unsafe-best-match
-torch==2.6.0+cpu
-torchaudio==2.6.0+cpu
+#
+# Linux arm64 (Apple Silicon podman/docker machines, Graviton) is pinned without
+# `+cpu`. There is no torchaudio 2.6.0+cpu for aarch64 at all (the CPU index has
+# only the plain torchaudio-2.6.0-cp313-cp313-linux_aarch64.whl), and none is
+# needed: torch 2.6.0 declares its nvidia-* dependencies only for
+# platform_machine == "x86_64", so the plain aarch64 wheels on PyPI are already
+# CPU-only. Either index satisfies these pins, so an arm64 build also works where
+# download.pytorch.org is unreachable or TLS-intercepted (pip skips the index).
+torch==2.6.0+cpu; platform_machine == "x86_64"
+torch==2.6.0; platform_machine == "aarch64"
+torchaudio==2.6.0+cpu; platform_machine == "x86_64"
+torchaudio==2.6.0; platform_machine == "aarch64"
 
 # Dependency traps, all documented in docs/measurements/chatterbox-cpu.md:
 # * numba (via librosa) imports coverage.types, which needs coverage>=7.6;
