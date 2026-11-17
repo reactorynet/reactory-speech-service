@@ -210,3 +210,9 @@ echo
 echo "Restored into $MODELS_DIR: $installed installed, $unchanged already up to date."
 echo "Build the image with the models in place:"
 echo "  podman build -t reactory-speech-service:speech-core ."
+if grep -q '  chatterbox/' "$BUNDLE/SHA256SUMS"; then
+    # Never baked into an image (.dockerignore); the expressive container mounts it.
+    echo "Chatterbox weights are in $MODELS_DIR/chatterbox. They are mounted into the"
+    echo "speech-expressive container rather than built in:"
+    echo "  make expressive-build && make expressive-run"
+fi

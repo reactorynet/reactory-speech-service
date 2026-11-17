@@ -8,3 +8,8 @@ __pycache__/
 .DS_Store
 .env
 tests/
+
+# Optional Chatterbox weights (3.2 GB). The speech-expressive container mounts
+# them as a volume (make expressive-run); baking them into either image would
+# blow the speech-core size budget and duplicate the volume.
+models/chatterbox/

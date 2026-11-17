@@ -12,6 +12,7 @@
 #     kokoro-v1.0.onnx
 #     voices-v1.0.bin
 #     whisper-base/config.json, model.bin, tokenizer.json, vocabulary.txt
+#     chatterbox/manifest.json, *.safetensors, ...   with --include-chatterbox
 #
 # and a sibling "<archive>.sha256" is written next to it, so a truncated or
 # corrupted copy is caught before anything is unpacked. scripts/models-restore.sh
@@ -20,18 +21,28 @@
 # Packed: kokoro*.onnx and voices*.bin at the top of the models directory, and
 # every whisper-*/ and faster-whisper-*/ model directory (a directory that
 # contains model.bin). Hidden files (the .cache/ huggingface_hub leaves behind)
-# and the optional chatterbox/ weights are not packed.
+# are never packed. The optional Chatterbox weights in chatterbox/ (about
+# 3.2 GB, used by the speech-expressive image for voice cloning) are packed only
+# with --include-chatterbox, and then chatterbox/manifest.json must be present:
+# it is the hash list the engine verifies before loading, so weights without it
+# would be refused on the restored host anyway.
+#
+# Files are staged as hard links where the filesystem allows it, so packing the
+# Chatterbox weights does not first need a second 3.2 GB copy on disk.
 #
 # Usage:
 #   scripts/models-archive.sh [--models-dir DIR] [--output FILE]
+#                             [--include-chatterbox]
 #
-#   --models-dir DIR  models to pack (default: <repo>/models)
-#   --output FILE     archive path (default:
-#                     ./reactory-speech-models-<YYYYMMDD>.tar.gz)
+#   --models-dir DIR      models to pack (default: <repo>/models)
+#   --output FILE         archive path (default:
+#                         ./reactory-speech-models-<YYYYMMDD>.tar.gz)
+#   --include-chatterbox  also pack <models-dir>/chatterbox/
 #
 # Exit codes:
 #   0  archive and checksum written
-#   1  the models directory is incomplete (no Kokoro model, voices or Whisper)
+#   1  the models directory is incomplete (no Kokoro model, voices or Whisper;
+#      with --include-chatterbox, no chatterbox/manifest.json)
 #   2  the archive could not be written (bad usage, output exists, no tools)
 #
 set -euo pipefail
@@ -44,9 +55,10 @@ BUNDLE_NAME="reactory-speech-models"
 
 MODELS_DIR="$REPO_ROOT/models"
 OUTPUT=""
+INCLUDE_CHATTERBOX=0
 
 usage() {
-    sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 sha256_of() {
@@ -68,6 +80,10 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || { echo "error: --output needs a value" >&2; exit 2; }
             OUTPUT="$2"
             shift 2
+            ;;
+        --include-chatterbox)
+            INCLUDE_CHATTERBOX=1
+            shift
             ;;
         --help|-h)
             usage
@@ -120,6 +136,9 @@ FILES="$(
         # -L: a model directory may itself be a symlink (see .gitignore).
         find -L "$d" -type f ! -path '*/.*' | LC_ALL=C sort
     done
+    if [ "$INCLUDE_CHATTERBOX" -eq 1 ] && [ -d chatterbox ]; then
+        find -L chatterbox -type f ! -path '*/.*' | LC_ALL=C sort
+    fi
     true
 )"
 
@@ -128,6 +147,9 @@ missing=""
 has '^kokoro.*\.onnx$' || missing="$missing kokoro*.onnx"
 has '^voices.*\.bin$' || missing="$missing voices*.bin"
 has '^\(faster-\)\{0,1\}whisper-[^/]*/model\.bin$' || missing="$missing whisper-<size>/model.bin"
+if [ "$INCLUDE_CHATTERBOX" -eq 1 ]; then
+    has '^chatterbox/manifest\.json$' || missing="$missing chatterbox/manifest.json (run scripts/models-download.sh --include-chatterbox)"
+fi
 if [ -n "$missing" ]; then
     echo "error: $MODELS_DIR is incomplete; missing:$missing" >&2
     echo "       Run scripts/models-download.sh first." >&2
@@ -145,9 +167,14 @@ bytes=0
 while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     mkdir -p "$BUNDLE/$(dirname "$rel")"
-    # Copy, following symlinks, so the archive holds real files only;
-    # models-restore.sh refuses links.
-    cp -L "$MODELS_DIR/$rel" "$BUNDLE/$rel"
+    # The archive must hold real files only (models-restore.sh refuses links).
+    # A hard link is a real file to tar, and it saves copying gigabytes of
+    # weights; a symlink is copied through, and so is anything ln refuses (a
+    # different filesystem, for example).
+    src="$MODELS_DIR/$rel"
+    if [ -L "$src" ] || ! ln "$src" "$BUNDLE/$rel" 2>/dev/null; then
+        cp -L "$src" "$BUNDLE/$rel"
+    fi
     printf '%s  %s\n' "$(sha256_of "$BUNDLE/$rel")" "$rel" >> "$BUNDLE/SHA256SUMS"
     size=$(wc -c < "$BUNDLE/$rel" | tr -d ' ')
     count=$((count + 1))
@@ -157,10 +184,17 @@ $FILES
 EOF
 
 whisper_models="$(printf '%s\n' "$FILES" | sed -n 's#^\([^/]*\)/model\.bin$#\1#p' | tr '\n' ' ')"
+chatterbox="none"
+if [ -f "$BUNDLE/chatterbox/manifest.json" ]; then
+    # manifest.json is written by json.dumps(indent=2): one key per line.
+    chatterbox="$(sed -n 's/^ *"variant": *"\([^"]*\)".*/\1/p' "$BUNDLE/chatterbox/manifest.json" | head -n 1)"
+    [ -n "$chatterbox" ] || chatterbox="unknown variant"
+fi
 cat > "$BUNDLE/MANIFEST.txt" <<EOF
 Reactory speech-core model bundle
 created_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 whisper_models: ${whisper_models% }
+chatterbox: $chatterbox
 files: $count
 bytes: $bytes
 restore: scripts/models-restore.sh <this archive>

@@ -64,6 +64,21 @@ the build then needs no network for models. The same targets exist as
 `make models-download`, `make models-archive` and
 `make models-restore ARCHIVE=<file>`.
 
+The optional Chatterbox weights for voice cloning (the speech-expressive image;
+about 3.2 GB, also from Hugging Face) travel the same way when both steps on the
+connected machine are given `--include-chatterbox` (or `CHATTERBOX=1` with the
+make targets):
+
+```bash
+scripts/models-download.sh --include-chatterbox
+scripts/models-archive.sh --include-chatterbox
+```
+
+The restore needs no flag: it installs whatever the bundle lists, putting the
+weights in `models/chatterbox/` with the `manifest.json` the engine verifies.
+That directory is in `.dockerignore`, so neither image build copies it; the
+speech-expressive container mounts it (`make expressive-run`).
+
 Or via the Reactory docker-compose:
 
 ```bash

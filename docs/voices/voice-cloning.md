@@ -34,6 +34,14 @@ python scripts/generate_clone_keys.py --output-dir data
 # edit data/clone_approvers.json -> {"clone_approvers": ["ops@example.com"]}
 ```
 
+Cloning also needs the speech-expressive image (`make expressive-build`) and the
+Chatterbox weights in `models/chatterbox/` (`make download-chatterbox`). Where
+the network blocks Hugging Face, carry the weights in the offline model bundle
+instead: `scripts/models-download.sh --include-chatterbox` and
+`scripts/models-archive.sh --include-chatterbox` on a connected machine, then
+`scripts/models-restore.sh <archive>` here (see the README, "Restricted
+networks").
+
 | Setting | Default | Meaning |
 |---|---|---|
 | `CLONE_APPROVERS_PATH` | `data/clone_approvers.json` | Deployed allowlist. **Never commit.** Empty or absent => cloning unavailable. |
