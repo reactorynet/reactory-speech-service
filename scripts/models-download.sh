@@ -22,6 +22,9 @@
 # speech-expressive engine used for voice cloning) into <models-dir>/chatterbox
 # through scripts/download_chatterbox.py: the standard variant, about 3.2 GB,
 # with a manifest.json of SHA-256 hashes the engine checks before loading.
+# With --include-chatterbox-multilingual it fetches the 23-language model, about
+# 3.2 GB more, into <models-dir>/chatterbox-multilingual the same way. The two
+# are independent: either, both or neither.
 #
 # Python 3.10+ is required. When the chosen interpreter cannot import what the
 # downloaders need (httpx and huggingface_hub; plus numpy, soundfile and
@@ -31,12 +34,16 @@
 #
 # Usage:
 #   scripts/models-download.sh [--models-dir DIR] [--whisper-size SIZE]
-#                              [--include-chatterbox] [--python PYTHON]
+#                              [--include-chatterbox]
+#                              [--include-chatterbox-multilingual]
+#                              [--python PYTHON]
 #
 #   --models-dir DIR      where to download (default: <repo>/models)
 #   --whisper-size SIZE   faster-whisper size: tiny, base, small, ... (default:
 #                         $WHISPER_MODEL_SIZE, else base — the service default)
 #   --include-chatterbox  also download the Chatterbox weights (about 3.2 GB)
+#   --include-chatterbox-multilingual
+#                         also download Chatterbox Multilingual (about 3.2 GB)
 #   --python PYTHON       interpreter to run the downloader (default: python3)
 #
 # Exit codes:
@@ -53,6 +60,7 @@ MODELS_DIR="$REPO_ROOT/models"
 WHISPER_SIZE="${WHISPER_MODEL_SIZE:-base}"
 PYTHON="python3"
 INCLUDE_CHATTERBOX=0
+INCLUDE_MULTILINGUAL=0
 
 #: The files faster-whisper needs in a model directory; mirrors WHISPER_FILES in
 #: scripts/download_models.py.
@@ -63,8 +71,11 @@ WHISPER_FILES="config.json model.bin tokenizer.json vocabulary.txt"
 #: app/engines/chatterbox.py.
 CHATTERBOX_FILES="manifest.json ve.safetensors t3_cfg.safetensors s3gen.safetensors tokenizer.json conds.pt"
 
+#: The same for the multilingual model; mirrors VARIANT_FILES["multilingual"].
+MULTILINGUAL_FILES="manifest.json ve.pt t3_mtl23ls_v2.safetensors s3gen.pt grapheme_mtl_merged_expanded_v1.json Cangjie5_TC.json conds.pt"
+
 usage() {
-    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -81,6 +92,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --include-chatterbox)
             INCLUDE_CHATTERBOX=1
+            shift
+            ;;
+        --include-chatterbox-multilingual)
+            INCLUDE_MULTILINGUAL=1
             shift
             ;;
         --python)
@@ -130,7 +145,7 @@ trap cleanup EXIT
 # list and manifest format; that import needs these, but not torch.
 IMPORTS="httpx, huggingface_hub"
 PACKAGES="httpx huggingface_hub"
-if [ "$INCLUDE_CHATTERBOX" -eq 1 ]; then
+if [ "$INCLUDE_CHATTERBOX" -eq 1 ] || [ "$INCLUDE_MULTILINGUAL" -eq 1 ]; then
     IMPORTS="$IMPORTS, numpy, soundfile, pydantic_settings"
     PACKAGES="$PACKAGES numpy soundfile pydantic-settings"
 fi
@@ -168,6 +183,17 @@ if [ "$INCLUDE_CHATTERBOX" -eq 1 ]; then
     fi
 fi
 
+if [ "$INCLUDE_MULTILINGUAL" -eq 1 ]; then
+    echo "Downloading Chatterbox Multilingual (about 3.2 GB) into $MODELS_DIR/chatterbox-multilingual ..."
+    if ! "$RUN_PYTHON" "$SCRIPT_DIR/download_chatterbox.py" \
+        --variant multilingual --models-dir "$MODELS_DIR/chatterbox-multilingual"; then
+        echo >&2
+        echo "error: the Chatterbox Multilingual download failed (see above). The models" >&2
+        echo "       above are in place; re-run with --include-chatterbox-multilingual to retry." >&2
+        exit 1
+    fi
+fi
+
 # Confirm the result rather than trusting the downloader's exit status alone:
 # the archive step packs whatever is here, and a partial set would only fail
 # much later, on the restricted host.
@@ -184,6 +210,11 @@ if [ "$INCLUDE_CHATTERBOX" -eq 1 ]; then
         [ -s "$MODELS_DIR/chatterbox/$f" ] || missing="$missing chatterbox/$f"
     done
 fi
+if [ "$INCLUDE_MULTILINGUAL" -eq 1 ]; then
+    for f in $MULTILINGUAL_FILES; do
+        [ -s "$MODELS_DIR/chatterbox-multilingual/$f" ] || missing="$missing chatterbox-multilingual/$f"
+    done
+fi
 
 if [ -n "$missing" ]; then
     echo "error: download finished but these files are missing from $MODELS_DIR:$missing" >&2
@@ -192,8 +223,7 @@ fi
 
 echo
 echo "Models ready in $MODELS_DIR."
-if [ "$INCLUDE_CHATTERBOX" -eq 1 ]; then
-    echo "Next: scripts/models-archive.sh --models-dir \"$MODELS_DIR\" --include-chatterbox"
-else
-    echo "Next: scripts/models-archive.sh --models-dir \"$MODELS_DIR\""
-fi
+NEXT_FLAGS=""
+[ "$INCLUDE_CHATTERBOX" -eq 1 ] && NEXT_FLAGS="$NEXT_FLAGS --include-chatterbox"
+[ "$INCLUDE_MULTILINGUAL" -eq 1 ] && NEXT_FLAGS="$NEXT_FLAGS --include-chatterbox-multilingual"
+echo "Next: scripts/models-archive.sh --models-dir \"$MODELS_DIR\"$NEXT_FLAGS"

@@ -34,6 +34,7 @@ Binding constraints for this module:
 from __future__ import annotations
 
 import hashlib
+import importlib
 import inspect
 import io
 import json
@@ -42,7 +43,7 @@ import re
 import tempfile
 import threading
 from collections.abc import Iterator
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,23 @@ logger = logging.getLogger(__name__)
 #: Engine id used in descriptors, routing and registry records.
 CHATTERBOX_ENGINE = "chatterbox"
 
+#: Engine id of the multilingual model.  It is a separate engine, not a third
+#: value of ``CHATTERBOX_VARIANT``, so it runs *alongside* the English model:
+#: the manager loads, evicts and limits it on its own, and a voice pinned to
+#: either model routes to the engine that owns it.
+CHATTERBOX_MULTILINGUAL_ENGINE = "chatterbox_multilingual"
+
+#: The multilingual variant name, used in manifests and registry records.
+MULTILINGUAL_VARIANT = "multilingual"
+
+#: Engine id per variant.  ``standard`` and ``turbo`` are alternatives for one
+#: deployment (``CHATTERBOX_VARIANT``); ``multilingual`` is its own engine.
+VARIANT_ENGINE_IDS: dict[str, str] = {
+    "standard": CHATTERBOX_ENGINE,
+    "turbo": CHATTERBOX_ENGINE,
+    MULTILINGUAL_VARIANT: CHATTERBOX_MULTILINGUAL_ENGINE,
+}
+
 #: Native output sample rate of Chatterbox, in Hz (measured, not assumed).
 CHATTERBOX_SAMPLE_RATE = 24000
 
@@ -80,8 +98,56 @@ CHATTERBOX_SAMPLE_RATE = 24000
 CHATTERBOX_LICENSE = "MIT"
 CHATTERBOX_ATTRIBUTION = "Chatterbox (Resemble AI)"
 
-#: Chatterbox 0.1.7 is English-only.
+#: The English models (``standard``, ``turbo``) in chatterbox-tts 0.1.7.
 CHATTERBOX_LANGUAGES = ["en-US"]
+
+#: ``language_id`` values ``ChatterboxMultilingualTTS.generate`` accepts, copied
+#: from ``chatterbox.mtl_tts.SUPPORTED_LANGUAGES`` in chatterbox-tts 0.1.7.  The
+#: voice registry uses the same codes as each multilingual voice's language.
+MULTILINGUAL_LANGUAGES: dict[str, str] = {
+    "ar": "arabic",
+    "da": "danish",
+    "de": "german",
+    "el": "greek",
+    "en": "english",
+    "es": "spanish",
+    "fi": "finnish",
+    "fr": "french",
+    "he": "hebrew",
+    "hi": "hindi",
+    "it": "italian",
+    "ja": "japanese",
+    "ko": "korean",
+    "ms": "malay",
+    "nl": "dutch",
+    "no": "norwegian",
+    "pl": "polish",
+    "pt": "portuguese",
+    "ru": "russian",
+    "sv": "swedish",
+    "sw": "swahili",
+    "tr": "turkish",
+    "zh": "chinese",
+}
+
+#: Languages the multilingual model renders with a reduced text front end in
+#: this deployment, and why.  Each is a fact about the packages and the offline
+#: model directory, not a quality measurement.
+MULTILINGUAL_LANGUAGE_CAVEATS: dict[str, str] = {
+    "he": (
+        "rendered without vowel marks: the optional dicta-onnx diacritiser is not "
+        "installed, so Hebrew text is read unpointed"
+    ),
+    "ru": (
+        "rendered without stress marks: the optional russian-text-stresser package is "
+        "not installed"
+    ),
+    "zh": (
+        "rendered without word segmentation: spacy-pkuseg downloads its segmentation "
+        "model at first use, which this adapter never allows; characters are still "
+        "converted through the bundled Cangjie table"
+    ),
+}
 
 #: Styles this adapter can render by varying ``exaggeration``.
 #:
@@ -171,6 +237,11 @@ _EXAGGERATION_NOTE = (
 )
 _NO_EXAGGERATION_NOTE = "This variant ignores exaggeration, so no style is applied."
 _STREAMING_NOTE = "Chatterbox renders a complete buffer; it does not stream incrementally."
+_MULTILINGUAL_NOTE = (
+    "Chatterbox Multilingual speaks 23 languages from one model; each language is a "
+    + "separate chatterbox_multilingual_<code> voice. Its compute cost was measured on "
+    + "the English model and is assumed similar, not measured."
+)
 
 COMPUTE_COST_ADVISORY: dict[str, Any] = {
     "measured_realtime_factor": 0.13,
@@ -195,12 +266,15 @@ COMPUTE_COST_ADVISORY: dict[str, Any] = {
 VARIANT_REPOS: dict[str, str] = {
     "standard": "ResembleAI/chatterbox",
     "turbo": "ResembleAI/chatterbox-turbo",
+    # The multilingual checkpoints live in the standard repository.
+    MULTILINGUAL_VARIANT: "ResembleAI/chatterbox",
 }
 
 #: Backend class locations, per variant.
 VARIANT_BACKENDS: dict[str, tuple[str, str]] = {
     "standard": ("chatterbox.tts", "ChatterboxTTS"),
     "turbo": ("chatterbox.tts_turbo", "ChatterboxTurboTTS"),
+    MULTILINGUAL_VARIANT: ("chatterbox.mtl_tts", "ChatterboxMultilingualTTS"),
 }
 
 #: Whether a variant can actually honour ``exaggeration`` — the source of truth
@@ -221,6 +295,9 @@ VARIANT_BACKENDS: dict[str, tuple[str, str]] = {
 VARIANT_SUPPORTS_EXAGGERATION: dict[str, bool] = {
     "standard": True,
     "turbo": False,
+    # ``ChatterboxMultilingualTTS.generate`` rebuilds ``emotion_adv`` from the
+    # argument on every call, exactly as the standard model does.
+    MULTILINGUAL_VARIANT: True,
 }
 
 #: Why a variant cannot express tone, for the ``ignored`` warning and the
@@ -247,6 +324,14 @@ VARIANT_STYLE_CAVEAT: dict[str, str] = {
 #:   ``merges.txt``, plus ``special_tokens_map.json`` / ``added_tokens.json``)
 #:   and the optional ``conds.pt``.
 #:
+#: * ``mtl_tts.py::ChatterboxMultilingualTTS.from_local`` reads ``ve.pt``,
+#:   ``t3_mtl23ls_v2.safetensors``, ``s3gen.pt`` (both ``.pt`` files with
+#:   ``torch.load(weights_only=True)``), ``grapheme_mtl_merged_expanded_v1.json``
+#:   and the optional ``conds.pt``.  Its tokenizer also fetches
+#:   ``Cangjie5_TC.json`` through ``hf_hub_download`` at construction; the
+#:   adapter serves that from this directory instead (see
+#:   :func:`_serve_hub_files_from`), so it is part of the verified set.
+#:
 #: There is **no** ``tokenizer.json`` in ``ResembleAI/chatterbox-turbo``.  The
 #: standard repository holds nine redundant checkpoints (``*.pt`` duplicates,
 #: v2/v3 multilingual T3 weights, extra vocoders) on top of these files, which is
@@ -270,6 +355,14 @@ VARIANT_FILES: dict[str, tuple[str, ...]] = {
         "added_tokens.json",
         "conds.pt",
     ),
+    MULTILINGUAL_VARIANT: (
+        "ve.pt",
+        "t3_mtl23ls_v2.safetensors",
+        "s3gen.pt",
+        "grapheme_mtl_merged_expanded_v1.json",
+        "Cangjie5_TC.json",
+        "conds.pt",
+    ),
 }
 
 #: Whole-repository size, for the operator-facing comparison.
@@ -283,6 +376,7 @@ VARIANT_FILES: dict[str, tuple[str, ...]] = {
 VARIANT_REPO_BYTES: dict[str, int] = {
     "standard": 13_866_212_931,  # 13.87 GB across 18 files
     "turbo": 4_044_184_736,  # 4.04 GB across 13 files
+    MULTILINGUAL_VARIANT: 13_866_212_931,  # the standard repository
 }
 
 #: Bytes actually read by ``from_local``, per variant.  Asserted against the
@@ -290,6 +384,7 @@ VARIANT_REPO_BYTES: dict[str, int] = {
 VARIANT_REQUIRED_BYTES: dict[str, int] = {
     "standard": 3_191_966_992,  # 3.19 GB across 5 files
     "turbo": 2_987_680_596,  # 2.99 GB across 9 files
+    MULTILINGUAL_VARIANT: 3_208_951_748,  # 3.21 GB across 6 files
 }
 
 MANIFEST_NAME = "manifest.json"
@@ -763,6 +858,60 @@ def _import_backend(variant: str):
     return getattr(module, class_name)
 
 
+@contextmanager
+def _offline_text_front_end(root: Path) -> Iterator[None]:
+    """Keep the multilingual tokenizer's construction off the network.
+
+    ``ChatterboxMultilingualTTS.from_local`` builds an ``MTLTokenizer`` whose
+    Chinese converter does two network things the adapter forbids (weights are
+    never fetched implicitly, and production hosts may have no route out):
+
+    * it calls ``hf_hub_download(repo_id=..., filename="Cangjie5_TC.json")``.
+      That file is part of the verified model directory, so the call is answered
+      from ``root``; a name that is not there raises instead of downloading.
+    * it calls ``spacy_pkuseg.pkuseg()``, which downloads a 35 MB segmentation
+      model on first use.  It is made to raise ``ImportError``, the one failure
+      the tokenizer already handles (it logs and skips segmentation).  Any other
+      failure, such as a refused download, would abort the whole model load.
+
+    Both replacements are restored on exit.
+    """
+    patches: list[tuple[Any, str, Any]] = []
+
+    def _patch(module_name: str, attribute: str, replacement) -> None:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            return
+        if hasattr(module, attribute):
+            patches.append((module, attribute, getattr(module, attribute)))
+            setattr(module, attribute, replacement)
+
+    def _local_hub_file(*args, **kwargs) -> str:
+        filename = kwargs.get("filename", args[1] if len(args) > 1 else None)
+        path = root / str(filename)
+        if filename and path.is_file():
+            return str(path)
+        raise FileNotFoundError(
+            f"{filename!r} is not in the verified model directory {root}; the Chatterbox "
+            "adapter never downloads model files while loading"
+        )
+
+    def _no_segmenter(*_args, **_kwargs):
+        raise ImportError(
+            "spacy-pkuseg downloads its segmentation model at first use, which this "
+            "adapter does not allow; Chinese is rendered without word segmentation"
+        )
+
+    _patch("chatterbox.models.tokenizers.tokenizer", "hf_hub_download", _local_hub_file)
+    _patch("spacy_pkuseg", "pkuseg", _no_segmenter)
+    try:
+        yield
+    finally:
+        for module, attribute, original in reversed(patches):
+            setattr(module, attribute, original)
+
+
 def _instantiate_backend(backend, store: ChatterboxModelStore, device: str):
     """Construct the backend model from the verified local weights.
 
@@ -773,9 +922,15 @@ def _instantiate_backend(backend, store: ChatterboxModelStore, device: str):
     must degrade to a clear, actionable error and a Kokoro fallback, not an
     unhandled crash.
     """
+    offline = (
+        _offline_text_front_end(store.root)
+        if store.variant == MULTILINGUAL_VARIANT
+        else nullcontext()
+    )
     try:
         if callable(getattr(backend, "from_local", None)):
-            return backend.from_local(str(store.root), device)
+            with offline:
+                return backend.from_local(str(store.root), device)
         signature = inspect.signature(backend.from_pretrained)
         kwargs: dict[str, Any] = {}
         if "device" in signature.parameters:
@@ -971,9 +1126,17 @@ class ChatterboxEngine:
     ) -> None:
         self.variant = (variant or settings.chatterbox_variant or "standard").lower()
         self.device = device or settings.chatterbox_device or "cpu"
-        self._store = model_store or ChatterboxModelStore(
-            settings.chatterbox_model_dir_resolved, variant=self.variant
+        #: The multilingual model is its own engine (see
+        #: :data:`CHATTERBOX_MULTILINGUAL_ENGINE`), so the id is per instance.
+        self.id = VARIANT_ENGINE_IDS.get(self.variant, CHATTERBOX_ENGINE)
+        if self.is_multilingual:
+            self.name = "Chatterbox Multilingual (expressive, MIT)"
+        default_dir = (
+            settings.chatterbox_multilingual_model_dir_resolved
+            if self.is_multilingual
+            else settings.chatterbox_model_dir_resolved
         )
+        self._store = model_store or ChatterboxModelStore(default_dir, variant=self.variant)
         self._model = None
         self._ready = False
         self._sample_rate = CHATTERBOX_SAMPLE_RATE
@@ -991,6 +1154,36 @@ class ChatterboxEngine:
         #: clone must always restore the previous conditioning.  An RLock because
         #: the clone backend re-enters it from inside a render.
         self._model_guard = threading.RLock()
+
+    @property
+    def is_multilingual(self) -> bool:
+        """Whether this engine runs the 23-language model."""
+        return self.variant == MULTILINGUAL_VARIANT
+
+    def language_id_for(self, locale: str | None) -> str | None:
+        """The ``language_id`` to pass to the model, or raise when unsupported.
+
+        The English models take no language argument, so they return ``None``
+        and refuse any locale that is not English.  The multilingual model
+        returns the base code of the voice's locale (``de`` for ``de``,
+        ``pt`` for ``pt-br``) and refuses one it was not trained on.
+        """
+        if not self.is_multilingual:
+            language = canonical_language(locale)
+            if language is not None and language not in CHATTERBOX_LANGUAGES:
+                raise ChatterboxError(
+                    f"Chatterbox {self.variant} is English-only; it cannot render "
+                    f"'{language}'. Use a chatterbox_multilingual voice."
+                )
+            return None
+        code = str(locale or "").strip().lower().replace("_", "-").split("-")[0]
+        if code not in MULTILINGUAL_LANGUAGES:
+            raise ChatterboxError(
+                f"Chatterbox Multilingual cannot render locale {locale!r}; it supports "
+                + ", ".join(sorted(MULTILINGUAL_LANGUAGES))
+                + "."
+            )
+        return code
 
     @property
     def model_guard(self) -> threading.RLock:
@@ -1235,30 +1428,45 @@ class ChatterboxEngine:
     # Capabilities
     # ------------------------------------------------------------------
 
-    def capabilities(self) -> EngineCapabilities:
-        expressive = list(CHATTERBOX_STYLES) if self.supports_exaggeration else ["neutral"]
-        others = [language for language in all_canonical_languages() if language not in CHATTERBOX_LANGUAGES]
-        return EngineCapabilities(
-            engine=self.id,
-            languages=list(CHATTERBOX_LANGUAGES),
-            unsupported_languages=others,
-            language_support=[
+    def _multilingual_language_support(self) -> list[dict[str, Any]]:
+        """One row per language the multilingual model accepts."""
+        rows: list[dict[str, Any]] = []
+        for code in sorted(MULTILINGUAL_LANGUAGES):
+            caveat = MULTILINGUAL_LANGUAGE_CAVEATS.get(code)
+            rows.append(
                 {
-                    "language": language,
-                    "locale": engine_locale(language),
-                    "supported": language in CHATTERBOX_LANGUAGES,
-                    "quality": "unverified" if language in CHATTERBOX_LANGUAGES else "unsupported",
-                    "caveat": None
-                    if language in CHATTERBOX_LANGUAGES
-                    else "Chatterbox 0.1.7 is English-only",
-                    "reason": "English-only model; round-trip quality was not measured for "
-                    "SPEECH-005"
-                    if language in CHATTERBOX_LANGUAGES
-                    else "no English text front end for this language",
+                    "language": code,
+                    "locale": code,
+                    "supported": True,
+                    "quality": "degraded" if caveat else "unverified",
+                    "caveat": caveat,
+                    "reason": "round-trip quality has not been measured for this language",
                     "measured": False,
                 }
+            )
+        return rows
+
+    def capabilities(self) -> EngineCapabilities:
+        expressive = list(CHATTERBOX_STYLES) if self.supports_exaggeration else ["neutral"]
+        if self.is_multilingual:
+            languages = sorted(MULTILINGUAL_LANGUAGES)
+            others = [
+                language
                 for language in all_canonical_languages()
-            ],
+                if language.split("-")[0].lower() not in MULTILINGUAL_LANGUAGES
+            ]
+            language_support = self._multilingual_language_support()
+        else:
+            languages = list(CHATTERBOX_LANGUAGES)
+            others = [
+                language for language in all_canonical_languages() if language not in CHATTERBOX_LANGUAGES
+            ]
+            language_support = self._english_language_support()
+        return EngineCapabilities(
+            engine=self.id,
+            languages=languages,
+            unsupported_languages=others,
+            language_support=language_support,
             native_rate=False,
             native_pitch=False,
             native_volume=False,
@@ -1277,13 +1485,37 @@ class ChatterboxEngine:
             compute_cost=dict(COMPUTE_COST_ADVISORY),
             capability_notes=[
                 *([self.style_caveat] if self.style_caveat else []),
+                *([_MULTILINGUAL_NOTE] if self.is_multilingual else []),
                 _CLONING_NOTE,
                 _WATERMARK_NOTE,
                 _EXAGGERATION_NOTE if self.supports_exaggeration else _NO_EXAGGERATION_NOTE,
                 _STREAMING_NOTE,
             ],
-            supports_paralinguistic_tags=list(PARALINGUISTIC_TAGS),
+            # The tags are the English model's vocabulary; whether the
+            # multilingual tokenizer keeps them is unverified, so none are claimed.
+            supports_paralinguistic_tags=[] if self.is_multilingual else list(PARALINGUISTIC_TAGS),
         )
+
+    @staticmethod
+    def _english_language_support() -> list[dict[str, Any]]:
+        """One row per registry language for the English-only models."""
+        return [
+            {
+                "language": language,
+                "locale": engine_locale(language),
+                "supported": language in CHATTERBOX_LANGUAGES,
+                "quality": "unverified" if language in CHATTERBOX_LANGUAGES else "unsupported",
+                "caveat": None
+                if language in CHATTERBOX_LANGUAGES
+                else "Chatterbox 0.1.7 is English-only",
+                "reason": "English-only model; round-trip quality was not measured for "
+                "SPEECH-005"
+                if language in CHATTERBOX_LANGUAGES
+                else "no English text front end for this language",
+                "measured": False,
+            }
+            for language in all_canonical_languages()
+        ]
 
     def descriptor(self) -> dict[str, Any]:
         capabilities = self.capabilities()
@@ -1473,11 +1705,7 @@ class ChatterboxEngine:
         plan = self.lower(req.direction)
         plan = self._report_request_controls(req, plan)
         _voice_key, locale = self.resolve_voice(req.voice)
-        language = canonical_language(locale)
-        if language is not None and language not in CHATTERBOX_LANGUAGES:
-            raise ChatterboxError(
-                f"Chatterbox 0.1.7 is English-only; it cannot render '{language}'."
-            )
+        language_id = self.language_id_for(locale)
 
         text, text_notes = sanitise_text(req.text)
         plan = plan.model_copy(update={"warnings": [*plan.warnings, *text_notes]})
@@ -1502,11 +1730,15 @@ class ChatterboxEngine:
                 # A clone is re-derived from its stored embedding; the reference
                 # clip is gone by default, so there is deliberately no path that
                 # reads one.
+                # Clones are created on and stored for the English engine
+                # only (TTSService excludes this one), so no language applies.
                 samples = self._render_clone(
                     text, req.clone_embedding, exaggeration=float(exaggeration)
                 )
             else:
-                samples = self._render(text, exaggeration=float(exaggeration))
+                samples = self._render(
+                    text, exaggeration=float(exaggeration), language_id=language_id
+                )
         return AudioResult(
             audio=self.samples_to_wav(samples, self._sample_rate),
             duration=len(samples) / self._sample_rate,
@@ -1532,7 +1764,9 @@ class ChatterboxEngine:
             audio=result.audio, duration=result.duration, sample_rate=result.sample_rate
         )
 
-    def _render(self, text: str, *, exaggeration: float) -> np.ndarray:
+    def _render(
+        self, text: str, *, exaggeration: float, language_id: str | None = None
+    ) -> np.ndarray:
         model = self._model
         if model is None:  # pragma: no cover - guarded by synthesize
             raise ChatterboxError("Chatterbox model is not loaded")
@@ -1544,7 +1778,7 @@ class ChatterboxEngine:
         rendered: list[np.ndarray] = []
         gap = np.zeros(int(self._sample_rate * CHUNK_GAP_SECONDS), dtype=np.float32)
         for index, chunk in enumerate(chunks):
-            wav = self._generate(model, chunk, exaggeration)
+            wav = self._generate(model, chunk, exaggeration, language_id=language_id)
             if index:
                 rendered.append(gap)
             rendered.append(wav)
@@ -1581,11 +1815,24 @@ class ChatterboxEngine:
             rendered.append(wav)
         return np.concatenate(rendered) if len(rendered) > 1 else rendered[0]
 
-    def _generate(self, model, text: str, exaggeration: float) -> np.ndarray:
+    def generate_kwargs(self, exaggeration: float, language_id: str | None) -> dict[str, Any]:
+        """Keyword arguments for ``model.generate`` on this variant.
+
+        ``language_id`` is required by the multilingual model and unknown to the
+        English ones, so it is passed exactly when :meth:`language_id_for`
+        produced one.
+        """
         kwargs: dict[str, Any] = {}
         if self.supports_exaggeration:
             kwargs["exaggeration"] = float(exaggeration)
-        wav = model.generate(text, **kwargs)
+        if language_id is not None:
+            kwargs["language_id"] = language_id
+        return kwargs
+
+    def _generate(
+        self, model, text: str, exaggeration: float, *, language_id: str | None = None
+    ) -> np.ndarray:
+        wav = model.generate(text, **self.generate_kwargs(exaggeration, language_id))
         samples = _to_numpy(wav)
         if samples.size == 0:
             raise ChatterboxError("Chatterbox returned empty audio.")
@@ -1778,9 +2025,7 @@ class ChatterboxCloneBackend:
         """
         torch = self._torch()
         model = self._model()
-        kwargs: dict[str, Any] = {}
-        if self._engine.supports_exaggeration:
-            kwargs["exaggeration"] = float(exaggeration)
+        kwargs = self._engine.generate_kwargs(exaggeration, None)
         with self._engine.model_guard:
             previous = getattr(model, "conds", None)
             try:
@@ -1795,6 +2040,9 @@ __all__ = [
     "CHATTERBOX_ATTRIBUTION",
     "CHATTERBOX_ENGINE",
     "CHATTERBOX_LICENSE",
+    "CHATTERBOX_MULTILINGUAL_ENGINE",
+    "MULTILINGUAL_LANGUAGES",
+    "MULTILINGUAL_VARIANT",
     "CHATTERBOX_SAMPLE_RATE",
     "CHATTERBOX_STYLES",
     "COMPUTE_COST_ADVISORY",

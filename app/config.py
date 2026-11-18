@@ -136,6 +136,15 @@ class Settings(BaseSettings):
     #: container build time.  The directory carries a manifest.json with the
     #: licence (MIT) and a SHA-256 per file.
     chatterbox_model_dir: str = "models/chatterbox"
+    #: The 23-language model (ChatterboxMultilingualTTS) runs as a second engine,
+    #: ``chatterbox_multilingual``, alongside the English one; it is not a value
+    #: of ``chatterbox_variant``.  Off by default for the same reason as above,
+    #: and its weights need their own directory: they share file names with the
+    #: standard model's repository.  Keeping both models and Kokoro resident needs
+    #: ``speech_max_loaded_engines`` of 3 (about 9 GB); with the default of 2 the
+    #: manager evicts the least recently used idle engine instead.
+    chatterbox_multilingual_enabled: bool = False
+    chatterbox_multilingual_model_dir: str = "models/chatterbox-multilingual"
 
     # Models
     models_dir: str = "models"
@@ -161,6 +170,10 @@ class Settings(BaseSettings):
     @property
     def chatterbox_model_dir_resolved(self) -> Path:
         return Path(self.chatterbox_model_dir)
+
+    @property
+    def chatterbox_multilingual_model_dir_resolved(self) -> Path:
+        return Path(self.chatterbox_multilingual_model_dir)
 
     @property
     def designed_voices_resolved(self) -> Path:

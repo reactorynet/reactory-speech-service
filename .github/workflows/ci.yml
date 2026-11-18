@@ -123,6 +123,20 @@ jobs:
           print(platform.machine(), 'torch', torch.__version__, 'torchaudio', torchaudio.__version__)
           "
 
+      # The multilingual adapter mirrors the installed package: its language
+      # list, and the two upstream functions it replaces while loading so the
+      # tokenizer never downloads anything. An upgrade that renames either
+      # would otherwise only show up when the weights are first loaded.
+      - name: Check the multilingual adapter against the installed package
+        run: |
+          docker run --rm reactory-speech-service:speech-expressive python -c "
+          import chatterbox.mtl_tts as mtl, chatterbox.models.tokenizers.tokenizer as tok, spacy_pkuseg
+          from app.engines.chatterbox import MULTILINGUAL_LANGUAGES
+          assert set(mtl.SUPPORTED_LANGUAGES) == set(MULTILINGUAL_LANGUAGES), sorted(mtl.SUPPORTED_LANGUAGES)
+          assert callable(tok.hf_hub_download) and callable(spacy_pkuseg.pkuseg)
+          print('multilingual:', len(MULTILINGUAL_LANGUAGES), 'languages')
+          "
+
   image-size:
     name: speech-core image size (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

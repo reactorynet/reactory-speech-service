@@ -35,6 +35,7 @@ speech service. It is the reference for every ticket raised against this reposit
 | [`voices/kokoro-voice-catalogue.md`](voices/kokoro-voice-catalogue.md) | The 54 shipped voices and how to design new ones |
 | [`voices/designed-voices.md`](voices/designed-voices.md) | Blending rules, the four shipped presets, previews and persistence |
 | [`voices/voice-cloning.md`](voices/voice-cloning.md) | Consent-first cloning: deployment, retention, provenance and takedown |
+| [`voices/chatterbox-multilingual.md`](voices/chatterbox-multilingual.md) | The 23-language Chatterbox engine: enabling it, its voices, and what is not yet measured |
 
 ## Tickets
 

@@ -1655,6 +1655,811 @@
         "[clear_throat]"
       ],
       "style_note": "Chatterbox Turbo accepts but ignores exaggeration (hp.emotion_adv=False); it cannot render tone. Use chatterbox_standard for expressive styles."
+    },
+    {
+      "id": "chatterbox_multilingual_ar",
+      "name": "Chatterbox Multilingual Arabic",
+      "engine": "chatterbox_multilingual",
+      "language": "ar",
+      "locale": "ar",
+      "gender": "unspecified",
+      "tags": [
+        "arabic",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_ar",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_da",
+      "name": "Chatterbox Multilingual Danish",
+      "engine": "chatterbox_multilingual",
+      "language": "da",
+      "locale": "da",
+      "gender": "unspecified",
+      "tags": [
+        "danish",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_da",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_de",
+      "name": "Chatterbox Multilingual German",
+      "engine": "chatterbox_multilingual",
+      "language": "de",
+      "locale": "de",
+      "gender": "unspecified",
+      "tags": [
+        "german",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_de",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_el",
+      "name": "Chatterbox Multilingual Greek",
+      "engine": "chatterbox_multilingual",
+      "language": "el",
+      "locale": "el",
+      "gender": "unspecified",
+      "tags": [
+        "greek",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_el",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_en",
+      "name": "Chatterbox Multilingual English",
+      "engine": "chatterbox_multilingual",
+      "language": "en",
+      "locale": "en",
+      "gender": "unspecified",
+      "tags": [
+        "english",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_en",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_es",
+      "name": "Chatterbox Multilingual Spanish",
+      "engine": "chatterbox_multilingual",
+      "language": "es",
+      "locale": "es",
+      "gender": "unspecified",
+      "tags": [
+        "spanish",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_es",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_fi",
+      "name": "Chatterbox Multilingual Finnish",
+      "engine": "chatterbox_multilingual",
+      "language": "fi",
+      "locale": "fi",
+      "gender": "unspecified",
+      "tags": [
+        "finnish",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_fi",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_fr",
+      "name": "Chatterbox Multilingual French",
+      "engine": "chatterbox_multilingual",
+      "language": "fr",
+      "locale": "fr",
+      "gender": "unspecified",
+      "tags": [
+        "french",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_fr",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_he",
+      "name": "Chatterbox Multilingual Hebrew",
+      "engine": "chatterbox_multilingual",
+      "language": "he",
+      "locale": "he",
+      "gender": "unspecified",
+      "tags": [
+        "hebrew",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_he",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_hi",
+      "name": "Chatterbox Multilingual Hindi",
+      "engine": "chatterbox_multilingual",
+      "language": "hi",
+      "locale": "hi",
+      "gender": "unspecified",
+      "tags": [
+        "hindi",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_hi",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_it",
+      "name": "Chatterbox Multilingual Italian",
+      "engine": "chatterbox_multilingual",
+      "language": "it",
+      "locale": "it",
+      "gender": "unspecified",
+      "tags": [
+        "italian",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_it",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_ja",
+      "name": "Chatterbox Multilingual Japanese",
+      "engine": "chatterbox_multilingual",
+      "language": "ja",
+      "locale": "ja",
+      "gender": "unspecified",
+      "tags": [
+        "japanese",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_ja",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_ko",
+      "name": "Chatterbox Multilingual Korean",
+      "engine": "chatterbox_multilingual",
+      "language": "ko",
+      "locale": "ko",
+      "gender": "unspecified",
+      "tags": [
+        "korean",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_ko",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_ms",
+      "name": "Chatterbox Multilingual Malay",
+      "engine": "chatterbox_multilingual",
+      "language": "ms",
+      "locale": "ms",
+      "gender": "unspecified",
+      "tags": [
+        "malay",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_ms",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_nl",
+      "name": "Chatterbox Multilingual Dutch",
+      "engine": "chatterbox_multilingual",
+      "language": "nl",
+      "locale": "nl",
+      "gender": "unspecified",
+      "tags": [
+        "dutch",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_nl",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_no",
+      "name": "Chatterbox Multilingual Norwegian",
+      "engine": "chatterbox_multilingual",
+      "language": "no",
+      "locale": "no",
+      "gender": "unspecified",
+      "tags": [
+        "norwegian",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_no",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_pl",
+      "name": "Chatterbox Multilingual Polish",
+      "engine": "chatterbox_multilingual",
+      "language": "pl",
+      "locale": "pl",
+      "gender": "unspecified",
+      "tags": [
+        "polish",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_pl",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_pt",
+      "name": "Chatterbox Multilingual Portuguese",
+      "engine": "chatterbox_multilingual",
+      "language": "pt",
+      "locale": "pt",
+      "gender": "unspecified",
+      "tags": [
+        "portuguese",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_pt",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_ru",
+      "name": "Chatterbox Multilingual Russian",
+      "engine": "chatterbox_multilingual",
+      "language": "ru",
+      "locale": "ru",
+      "gender": "unspecified",
+      "tags": [
+        "russian",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_ru",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_sv",
+      "name": "Chatterbox Multilingual Swedish",
+      "engine": "chatterbox_multilingual",
+      "language": "sv",
+      "locale": "sv",
+      "gender": "unspecified",
+      "tags": [
+        "swedish",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_sv",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_sw",
+      "name": "Chatterbox Multilingual Swahili",
+      "engine": "chatterbox_multilingual",
+      "language": "sw",
+      "locale": "sw",
+      "gender": "unspecified",
+      "tags": [
+        "swahili",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_sw",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_tr",
+      "name": "Chatterbox Multilingual Turkish",
+      "engine": "chatterbox_multilingual",
+      "language": "tr",
+      "locale": "tr",
+      "gender": "unspecified",
+      "tags": [
+        "turkish",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_tr",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
+    },
+    {
+      "id": "chatterbox_multilingual_zh",
+      "name": "Chatterbox Multilingual Chinese",
+      "engine": "chatterbox_multilingual",
+      "language": "zh",
+      "locale": "zh",
+      "gender": "unspecified",
+      "tags": [
+        "chinese",
+        "expressive",
+        "batch",
+        "cpu",
+        "mit",
+        "multilingual"
+      ],
+      "quality": null,
+      "license": "MIT",
+      "attribution": "Chatterbox (Resemble AI)",
+      "style_spec": {
+        "type": "base",
+        "voice": "default_zh",
+        "variant": "multilingual"
+      },
+      "supports": {
+        "rate": false,
+        "pitch": false,
+        "volume": false,
+        "style": true,
+        "clone": false
+      },
+      "enabled": true,
+      "gpu_required": false,
+      "variant": "multilingual",
+      "model_class": "ChatterboxMultilingualTTS"
     }
   ]
 }

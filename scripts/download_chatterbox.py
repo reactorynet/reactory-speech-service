@@ -15,6 +15,7 @@ clear error and a Kokoro fallback, not a crash.
 Usage:
     python scripts/download_chatterbox.py --variant standard
     python scripts/download_chatterbox.py --variant turbo --models-dir /models/chatterbox-turbo
+    python scripts/download_chatterbox.py --variant multilingual
 """
 
 from __future__ import annotations
@@ -28,7 +29,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.config import settings  # noqa: E402
-from app.engines.chatterbox import VARIANT_REPOS, download_model  # noqa: E402
+from app.engines.chatterbox import (  # noqa: E402
+    MULTILINGUAL_VARIANT,
+    VARIANT_REPOS,
+    download_model,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,7 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--models-dir",
         default=None,
-        help="Target directory (default: CHATTERBOX_MODEL_DIR, models/chatterbox)",
+        help=(
+            "Target directory (default: CHATTERBOX_MODEL_DIR, models/chatterbox; for "
+            "multilingual, CHATTERBOX_MULTILINGUAL_MODEL_DIR, models/chatterbox-multilingual)"
+        ),
     )
     parser.add_argument("--repo-id", default=None, help="Override the upstream repository")
     parser.add_argument("--revision", default=None, help="Pin an upstream revision")
@@ -56,7 +64,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    root = args.models_dir or str(settings.chatterbox_model_dir_resolved)
+    default_dir = (
+        settings.chatterbox_multilingual_model_dir_resolved
+        if args.variant == MULTILINGUAL_VARIANT
+        else settings.chatterbox_model_dir_resolved
+    )
+    root = args.models_dir or str(default_dir)
+    enable = (
+        "CHATTERBOX_MULTILINGUAL_ENABLED=true"
+        if args.variant == MULTILINGUAL_VARIANT
+        else "CHATTERBOX_ENABLED=true"
+    )
     manifest = download_model(
         root,
         variant=args.variant,
@@ -69,8 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         f"  license:     {manifest['license']}\n"
         f"  attribution: {manifest['attribution']}\n"
         f"  files:       {len(manifest['files'])} (SHA-256 recorded in manifest.json)\n"
-        "Mount this directory into the speech-expressive container and set "
-        "CHATTERBOX_ENABLED=true."
+        f"Mount this directory into the speech-expressive container and set {enable}."
     )
     return 0
 

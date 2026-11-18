@@ -216,3 +216,8 @@ if grep -q '  chatterbox/' "$BUNDLE/SHA256SUMS"; then
     echo "speech-expressive container rather than built in:"
     echo "  make expressive-build && make expressive-run"
 fi
+if grep -q '  chatterbox-multilingual/' "$BUNDLE/SHA256SUMS"; then
+    echo "Chatterbox Multilingual weights are in $MODELS_DIR/chatterbox-multilingual."
+    echo "The speech-expressive container mounts them too; enable that engine with:"
+    echo "  make expressive-run CHATTERBOX_MULTILINGUAL=1"
+fi

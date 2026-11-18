@@ -13,6 +13,7 @@
 #     voices-v1.0.bin
 #     whisper-base/config.json, model.bin, tokenizer.json, vocabulary.txt
 #     chatterbox/manifest.json, *.safetensors, ...   with --include-chatterbox
+#     chatterbox-multilingual/manifest.json, ...     with --include-chatterbox-multilingual
 #
 # and a sibling "<archive>.sha256" is written next to it, so a truncated or
 # corrupted copy is caught before anything is unpacked. scripts/models-restore.sh
@@ -25,7 +26,9 @@
 # 3.2 GB, used by the speech-expressive image for voice cloning) are packed only
 # with --include-chatterbox, and then chatterbox/manifest.json must be present:
 # it is the hash list the engine verifies before loading, so weights without it
-# would be refused on the restored host anyway.
+# would be refused on the restored host anyway. The same holds for the
+# multilingual model in chatterbox-multilingual/ with
+# --include-chatterbox-multilingual.
 #
 # Files are staged as hard links where the filesystem allows it, so packing the
 # Chatterbox weights does not first need a second 3.2 GB copy on disk.
@@ -33,16 +36,19 @@
 # Usage:
 #   scripts/models-archive.sh [--models-dir DIR] [--output FILE]
 #                             [--include-chatterbox]
+#                             [--include-chatterbox-multilingual]
 #
 #   --models-dir DIR      models to pack (default: <repo>/models)
 #   --output FILE         archive path (default:
 #                         ./reactory-speech-models-<YYYYMMDD>.tar.gz)
 #   --include-chatterbox  also pack <models-dir>/chatterbox/
+#   --include-chatterbox-multilingual
+#                         also pack <models-dir>/chatterbox-multilingual/
 #
 # Exit codes:
 #   0  archive and checksum written
 #   1  the models directory is incomplete (no Kokoro model, voices or Whisper;
-#      with --include-chatterbox, no chatterbox/manifest.json)
+#      with an --include-chatterbox* flag, no manifest.json for that model)
 #   2  the archive could not be written (bad usage, output exists, no tools)
 #
 set -euo pipefail
@@ -56,9 +62,10 @@ BUNDLE_NAME="reactory-speech-models"
 MODELS_DIR="$REPO_ROOT/models"
 OUTPUT=""
 INCLUDE_CHATTERBOX=0
+INCLUDE_MULTILINGUAL=0
 
 usage() {
-    sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 sha256_of() {
@@ -83,6 +90,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --include-chatterbox)
             INCLUDE_CHATTERBOX=1
+            shift
+            ;;
+        --include-chatterbox-multilingual)
+            INCLUDE_MULTILINGUAL=1
             shift
             ;;
         --help|-h)
@@ -139,6 +150,9 @@ FILES="$(
     if [ "$INCLUDE_CHATTERBOX" -eq 1 ] && [ -d chatterbox ]; then
         find -L chatterbox -type f ! -path '*/.*' | LC_ALL=C sort
     fi
+    if [ "$INCLUDE_MULTILINGUAL" -eq 1 ] && [ -d chatterbox-multilingual ]; then
+        find -L chatterbox-multilingual -type f ! -path '*/.*' | LC_ALL=C sort
+    fi
     true
 )"
 
@@ -149,6 +163,9 @@ has '^voices.*\.bin$' || missing="$missing voices*.bin"
 has '^\(faster-\)\{0,1\}whisper-[^/]*/model\.bin$' || missing="$missing whisper-<size>/model.bin"
 if [ "$INCLUDE_CHATTERBOX" -eq 1 ]; then
     has '^chatterbox/manifest\.json$' || missing="$missing chatterbox/manifest.json (run scripts/models-download.sh --include-chatterbox)"
+fi
+if [ "$INCLUDE_MULTILINGUAL" -eq 1 ]; then
+    has '^chatterbox-multilingual/manifest\.json$' || missing="$missing chatterbox-multilingual/manifest.json (run scripts/models-download.sh --include-chatterbox-multilingual)"
 fi
 if [ -n "$missing" ]; then
     echo "error: $MODELS_DIR is incomplete; missing:$missing" >&2
@@ -184,17 +201,23 @@ $FILES
 EOF
 
 whisper_models="$(printf '%s\n' "$FILES" | sed -n 's#^\([^/]*\)/model\.bin$#\1#p' | tr '\n' ' ')"
-chatterbox="none"
-if [ -f "$BUNDLE/chatterbox/manifest.json" ]; then
-    # manifest.json is written by json.dumps(indent=2): one key per line.
-    chatterbox="$(sed -n 's/^ *"variant": *"\([^"]*\)".*/\1/p' "$BUNDLE/chatterbox/manifest.json" | head -n 1)"
-    [ -n "$chatterbox" ] || chatterbox="unknown variant"
-fi
+# manifest.json is written by json.dumps(indent=2): one key per line.
+manifest_variant() {
+    if [ -f "$1" ]; then
+        variant="$(sed -n 's/^ *"variant": *"\([^"]*\)".*/\1/p' "$1" | head -n 1)"
+        printf '%s' "${variant:-unknown variant}"
+    else
+        printf 'none'
+    fi
+}
+chatterbox="$(manifest_variant "$BUNDLE/chatterbox/manifest.json")"
+chatterbox_multilingual="$(manifest_variant "$BUNDLE/chatterbox-multilingual/manifest.json")"
 cat > "$BUNDLE/MANIFEST.txt" <<EOF
 Reactory speech-core model bundle
 created_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 whisper_models: ${whisper_models% }
 chatterbox: $chatterbox
+chatterbox-multilingual: $chatterbox_multilingual
 files: $count
 bytes: $bytes
 restore: scripts/models-restore.sh <this archive>

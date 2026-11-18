@@ -86,6 +86,12 @@ weights in `models/chatterbox/` with the `manifest.json` the engine verifies.
 That directory is in `.dockerignore`, so neither image build copies it; the
 speech-expressive container mounts it (`make expressive-run`).
 
+The 23-language Chatterbox Multilingual model (about 3.2 GB more) is packed the
+same way with `--include-chatterbox-multilingual` (or `CHATTERBOX_MULTILINGUAL=1`)
+and restored into `models/chatterbox-multilingual/`. It runs as a second engine
+beside the English one: `make expressive-run CHATTERBOX_MULTILINGUAL=1`. See
+[docs/voices/chatterbox-multilingual.md](docs/voices/chatterbox-multilingual.md).
+
 Or via the Reactory docker-compose:
 
 ```bash

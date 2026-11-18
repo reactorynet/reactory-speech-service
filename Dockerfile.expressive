@@ -72,9 +72,12 @@ ENV CHATTERBOX_ENABLED=true
 ENV CHATTERBOX_VARIANT=standard
 ENV CHATTERBOX_DEVICE=cpu
 ENV CHATTERBOX_MODEL_DIR=/app/models/chatterbox
+# The 23-language model is a second engine, off unless enabled at run time with
+# CHATTERBOX_MULTILINGUAL_ENABLED=true and its weights mounted here.
+ENV CHATTERBOX_MULTILINGUAL_MODEL_DIR=/app/models/chatterbox-multilingual
 
-# The expressive weights are supplied as a volume, never baked into the image.
-VOLUME ["/app/models/chatterbox"]
+# The expressive weights are supplied as volumes, never baked into the image.
+VOLUME ["/app/models/chatterbox", "/app/models/chatterbox-multilingual"]
 
 EXPOSE 8765
 

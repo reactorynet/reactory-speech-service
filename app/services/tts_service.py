@@ -132,22 +132,35 @@ class TTSService:
         executor: InferenceExecutor | None = None,
         manager: EngineManager | None = None,
         expressive: bool | None = None,
+        multilingual: bool | None = None,
     ) -> None:
         self._kokoro_engine = KokoroEngine()
         self._chatterbox_engine = None
+        self._chatterbox_multilingual_engine = None
         if manager is not None:
             self._manager = manager
         else:
             engines = [self._kokoro_engine]
             enabled = settings.chatterbox_enabled if expressive is None else expressive
-            if enabled:
-                # Import the adapter only when the flag is on: with it off the
+            multilingual_enabled = (
+                settings.chatterbox_multilingual_enabled if multilingual is None else multilingual
+            )
+            if enabled or multilingual_enabled:
+                # Import the adapter only when a flag is on: with both off the
                 # module is never imported, so startup works on a deployment
                 # where torch is not installed at all.
-                from app.engines.chatterbox import ChatterboxEngine
+                from app.engines.chatterbox import MULTILINGUAL_VARIANT, ChatterboxEngine
 
-                self._chatterbox_engine = ChatterboxEngine()
-                engines.append(self._chatterbox_engine)
+                # The English engine registers first, so a style request with no
+                # voice pinned keeps routing to it, exactly as before.
+                if enabled:
+                    self._chatterbox_engine = ChatterboxEngine()
+                    engines.append(self._chatterbox_engine)
+                if multilingual_enabled:
+                    self._chatterbox_multilingual_engine = ChatterboxEngine(
+                        variant=MULTILINGUAL_VARIANT
+                    )
+                    engines.append(self._chatterbox_multilingual_engine)
             self._manager = EngineManager(engines)
         self._router = EngineRouter(
             self._manager, order=self._manager.ids or [KOKORO_ENGINE]
@@ -286,7 +299,7 @@ class TTSService:
 
     def _clone_backend(self):
         """The first registered engine that can clone, or ``None``."""
-        for engine in self._manager.engines:
+        for engine in self._clone_capable_engines():
             getter = getattr(engine, "clone_backend", None)
             if not callable(getter):
                 continue
@@ -297,10 +310,25 @@ class TTSService:
 
     def _clone_engine(self):
         """The first registered engine that exposes a clone backend, or ``None``."""
-        for engine in self._manager.engines:
+        for engine in self._clone_capable_engines():
             if callable(getattr(engine, "clone_backend", None)):
                 return engine
         return None
+
+    def _clone_capable_engines(self) -> list:
+        """Engines a clone may be created on, in registration order.
+
+        The multilingual engine is excluded.  A clone record is stored under the
+        ``chatterbox`` engine id and rendered by the English model, so a speaker
+        embedding extracted by the multilingual model would be replayed through
+        a model it was not derived from.  Cloning in other languages is a
+        separate piece of work, with its own consent and quality questions.
+        """
+        return [
+            engine
+            for engine in self._manager.engines
+            if not getattr(engine, "is_multilingual", False)
+        ]
 
     async def run_clone_task(self, func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
         """Run a clone operation (extraction) off the event loop, engine loaded.
