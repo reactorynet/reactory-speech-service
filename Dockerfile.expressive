@@ -33,7 +33,7 @@
 # documented Kokoro fallback still works out of the box. Chatterbox weights
 # (3.1 GB) are mounted as a volume and fetched with
 # scripts/download_chatterbox.py on demand.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # System dependencies for espeak-ng (Kokoro phonemisation) and ffmpeg.
 RUN apt-get update && apt-get install -y --no-install-recommends \
