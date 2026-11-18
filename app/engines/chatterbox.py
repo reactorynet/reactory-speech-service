@@ -879,13 +879,26 @@ def _offline_text_front_end(root: Path) -> Iterator[None]:
     patches: list[tuple[Any, str, Any]] = []
 
     def _patch(module_name: str, attribute: str, replacement) -> None:
+        # A missing target is not fatal (spacy-pkuseg is optional upstream), but
+        # it means the guard is off for that call, so it is logged rather than
+        # skipped silently.  CI checks both targets exist in the built image.
         try:
             module = importlib.import_module(module_name)
         except ImportError:
+            logger.warning(
+                "Chatterbox offline guard not applied: %s is not importable", module_name
+            )
             return
-        if hasattr(module, attribute):
-            patches.append((module, attribute, getattr(module, attribute)))
-            setattr(module, attribute, replacement)
+        if not hasattr(module, attribute):
+            logger.warning(
+                "Chatterbox offline guard not applied: %s.%s does not exist; the "
+                "multilingual tokenizer may reach the network while loading",
+                module_name,
+                attribute,
+            )
+            return
+        patches.append((module, attribute, getattr(module, attribute)))
+        setattr(module, attribute, replacement)
 
     def _local_hub_file(*args, **kwargs) -> str:
         filename = kwargs.get("filename", args[1] if len(args) > 1 else None)
@@ -1080,6 +1093,11 @@ def _chunk_text(text: str, *, limit: int = MAX_CHARS_PER_CALL) -> list[str]:
     return [chunk for chunk in chunks if chunk]
 
 
+def _base_language(locale: str | None) -> str:
+    """``pt-BR`` -> ``pt``; ``fr_FR`` -> ``fr``; ``None`` -> ``""``."""
+    return re.split(r"[-_]", str(locale or ""), maxsplit=1)[0].strip().lower()
+
+
 def _record_variant(record) -> str:
     """The variant a registry record belongs to (pack voices and clones)."""
     return str(record.style_spec.get("variant") or "standard").lower()
@@ -1125,6 +1143,16 @@ class ChatterboxEngine:
         device: str | None = None,
     ) -> None:
         self.variant = (variant or settings.chatterbox_variant or "standard").lower()
+        if variant is None and self.variant == MULTILINGUAL_VARIANT:
+            # The multilingual model is a second engine with its own flag and
+            # model directory.  Accepting it here registered two engines under
+            # one id, and the second silently replaced the English one.
+            raise ValueError(
+                "CHATTERBOX_VARIANT=multilingual is not supported: CHATTERBOX_VARIANT "
+                "selects the English model ('standard' or 'turbo'). Set "
+                "CHATTERBOX_MULTILINGUAL_ENABLED=true to run the multilingual model "
+                "alongside it."
+            )
         self.device = device or settings.chatterbox_device or "cpu"
         #: The multilingual model is its own engine (see
         #: :data:`CHATTERBOX_MULTILINGUAL_ENGINE`), so the id is per instance.
@@ -1345,6 +1373,12 @@ class ChatterboxEngine:
             for record in voice_registry.reference_records(self.id)
             if _record_variant(record) == self.variant
         )
+        if self.is_multilingual:
+            # The first record is the engine's default voice (a request that
+            # names the engine but no voice, ``descriptor()["default_voice"]``,
+            # the fallback substitute).  The catalogue is alphabetical, which
+            # made it Arabic; English is one of the 23 and the safe default.
+            records.sort(key=lambda record: _base_language(record.language) != "en")
         return records
 
     @property

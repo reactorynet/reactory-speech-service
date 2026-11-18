@@ -45,6 +45,20 @@ curl -X POST http://localhost:8765/api/tts/synthesize \
 
 The voice decides the engine, so `chatterbox_standard` still goes to the English
 model and a style-only request with no voice still prefers the English engine.
+A request that names `"engine": "chatterbox_multilingual"` but no voice is
+rendered in English (`chatterbox_multilingual_en` is the engine's default voice).
+
+When a voice cannot be rendered by its own engine (for example the multilingual
+engine is not enabled), the service substitutes another voice **in the same
+language** and reports it in `X-Direction-Ignored` / `X-Direction-Warnings`. If
+the engine that would serve the request has no voice in that language, the
+request is refused with 422 rather than answered in another language: on a
+deployment without the multilingual engine, `chatterbox_multilingual_de` is a
+422, while `chatterbox_multilingual_en` falls back to an English Kokoro voice.
+The same rule works the other way: a French Kokoro voice sent to
+`"engine": "chatterbox_multilingual"` is rendered by `chatterbox_multilingual_fr`.
+If the owning engine is enabled but failed to load, the answer is the 503 for
+that engine, since a retry can succeed.
 Styles (`empathetic`, `cheerful` and the rest) work the same way as on the
 English model, through `exaggeration`. Paralinguistic tags such as `[laugh]` are
 not claimed: it has not been checked whether the multilingual tokenizer keeps
@@ -72,7 +86,8 @@ them.
    ```
 
 2. **Run.** The speech-expressive image already contains the model code. Mount
-   the weights and turn the engine on:
+   the weights and turn the engine on (`CHATTERBOX_VARIANT=multilingual` is
+   refused at startup: that setting selects the English model):
 
    ```bash
    make expressive-run CHATTERBOX_MULTILINGUAL=1
@@ -109,4 +124,5 @@ segmentation model. While loading, the adapter answers the first from the
 verified model directory and turns the second into the `ImportError` the
 tokenizer already handles. CI checks, inside the built image, that both upstream
 functions still exist under those names and that the package's language list
-matches the adapter's.
+matches the adapter's. If either is missing at runtime anyway, loading logs a
+`Chatterbox offline guard not applied` warning naming it.

@@ -42,7 +42,12 @@ from app.core.contracts import (
     Prosody,
 )
 from app.core.direction import resolve_direction
-from app.engines.base import EngineUnavailableError, UnknownEngineError, lower_direction
+from app.engines.base import (
+    EngineUnavailableError,
+    UnknownEngineError,
+    UnknownVoiceError,
+    lower_direction,
+)
 from app.engines.kokoro import KokoroEngine
 from app.engines.manager import EngineManager
 from app.engines.router import EngineRouter
@@ -84,6 +89,24 @@ SPEED_MAX = KOKORO_SPEED_MAX
 
 #: Output format of the audio this service returns.  Part of the cache key.
 OUTPUT_FORMAT = "wav"
+
+
+class VoiceLanguageUnavailableError(UnknownVoiceError):
+    """A pinned voice could only be substituted by a voice in another language.
+
+    Substituting a voice changes the timbre and is reported; substituting the
+    language changes what the listener hears, so it is refused (422) instead.
+    """
+
+
+def _base_language(locale: str | None) -> str:
+    """``en-GB`` -> ``en``; ``pt_BR`` -> ``pt``; ``None`` -> ``""``."""
+    return str(locale or "").strip().lower().replace("_", "-").split("-")[0]
+
+
+def _voice_language(voice_id: str | None) -> str:
+    record = voice_registry.get_record(voice_id) if voice_id else None
+    return _base_language(record.language) if record is not None else ""
 
 
 def _legacy_direction(speed: float | None) -> Direction:
@@ -528,6 +551,33 @@ class TTSService:
             return ids[0]
         return voice_registry.default_voice_for_engine(str(target.id))
 
+    def _substitute_voice_for(self, target, record) -> str | None:
+        """The voice ``target`` renders in place of ``record``, in the same language.
+
+        The engine's default is used when it speaks the pinned voice's language
+        (accents may differ: ``en-GB`` for ``en-US``), otherwise the first of the
+        engine's own voices that does.  With none, the request is refused rather
+        than rendered in another language.  A record with no language keeps the
+        old behaviour and takes the default.
+        """
+        default = self._default_voice_for(target)
+        language = _base_language(record.language)
+        if not language or default is None or _voice_language(default) == language:
+            return default
+        try:
+            ids = target.available_voice_ids()
+        except Exception:  # pragma: no cover - defensive
+            ids = []
+        for voice_id in ids:
+            if _voice_language(voice_id) == language:
+                return voice_id
+        raise VoiceLanguageUnavailableError(
+            f"Voice '{record.id}' speaks '{record.language}', but it can only be served "
+            f"by engine '{target.id}', which has no voice in that language. The service "
+            "does not answer in another language: enable engine "
+            f"'{record.engine}' or pick a voice from GET /api/tts/voices."
+        )
+
     def _prepare_request(
         self, target, request: EngineRequest
     ) -> tuple[EngineRequest, list[str], bool]:
@@ -537,6 +587,10 @@ class TTSService:
         voice — the expressive-engine fallback is the only such path today — the
         voice cannot be rendered as asked.  Substituting the engine's default and
         saying so is better than a 422 or a silent timbre change.
+
+        The substitute keeps the pinned voice's language: a German voice on an
+        engine with no German voice raises :class:`VoiceLanguageUnavailableError`
+        rather than answering in English (see :meth:`_substitute_voice_for`).
         """
         voice = request.voice
         if not voice:
@@ -555,7 +609,7 @@ class TTSService:
                 pass  # fall through to substitution
             else:
                 return request, [], False
-        substitute = self._default_voice_for(target)
+        substitute = self._substitute_voice_for(target, record)
         if substitute is None or substitute == voice:
             return request, [], False
         declared_variant = str(record.style_spec.get("variant") or "")
@@ -638,6 +692,7 @@ class TTSService:
         use_cache = self._cache.enabled and cache is not False
 
         unavailable: EngineUnavailableError | None = None
+        refused: VoiceLanguageUnavailableError | None = None
         fallback_notes: list[str] = []
         candidates = self._router.candidates(
             engine=engine, voice=voice, fallback=fallback, style=self._requested_style(merged)
@@ -660,9 +715,13 @@ class TTSService:
                 # different person speaking.
                 target_request, voice_notes, voice_substituted = request, [], False
             else:
-                target_request, voice_notes, voice_substituted = self._prepare_request(
-                    target, request
-                )
+                try:
+                    target_request, voice_notes, voice_substituted = self._prepare_request(
+                        target, request
+                    )
+                except VoiceLanguageUnavailableError as exc:
+                    refused = refused or exc
+                    continue
             plan = self._plan_for_engine(target, merged)
             if voice_substituted:
                 plan = plan.model_copy(
@@ -751,8 +810,12 @@ class TTSService:
                 manifest=manifest,
             )
 
+        # An engine that is down outranks a language refusal: the owning engine
+        # exists, so a retry can succeed (503), where the refusal (422) cannot.
         if unavailable is not None:
             raise unavailable
+        if refused is not None:
+            raise refused
         raise UnknownEngineError("No TTS engine could serve the request")
 
     async def synthesize_streaming_async(
@@ -967,6 +1030,7 @@ class TTSService:
         )
 
         unavailable: EngineUnavailableError | None = None
+        refused: VoiceLanguageUnavailableError | None = None
         fallback_notes: list[str] = []
         candidates = self._router.candidates(
             engine=engine, voice=voice, fallback=fallback, style=self._requested_style(merged)
@@ -986,9 +1050,13 @@ class TTSService:
             if clone_context is not None:
                 target_request, voice_notes, voice_substituted = request, [], False
             else:
-                target_request, voice_notes, voice_substituted = self._prepare_request(
-                    target, request
-                )
+                try:
+                    target_request, voice_notes, voice_substituted = self._prepare_request(
+                        target, request
+                    )
+                except VoiceLanguageUnavailableError as exc:
+                    refused = refused or exc
+                    continue
             try:
                 result = target.synthesize(target_request)
             except EngineUnavailableError as exc:
@@ -1011,8 +1079,12 @@ class TTSService:
             manifest = self._record_clone_manifest(clone_context, result.audio, text)
             return result.model_copy(update={"manifest": manifest})
 
+        # An engine that is down outranks a language refusal: the owning engine
+        # exists, so a retry can succeed (503), where the refusal (422) cannot.
         if unavailable is not None:
             raise unavailable
+        if refused is not None:
+            raise refused
         raise UnknownEngineError("No TTS engine could serve the request")
 
     def synthesize_streaming(

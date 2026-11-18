@@ -34,7 +34,7 @@ from app.engines.chatterbox import (
     _offline_text_front_end,
 )
 from app.services import voice_registry
-from app.services.tts_service import TTSService
+from app.services.tts_service import TTSService, VoiceLanguageUnavailableError
 from app.services.voice_registry import SHIPPED_VOICE_IDS
 
 TOKENIZER_MODULE = "chatterbox.models.tokenizers.tokenizer"
@@ -163,6 +163,17 @@ def test_the_multilingual_flag_alone_registers_only_that_engine(tmp_path, monkey
 
     assert service.engine_manager.ids == ["kokoro", "chatterbox_multilingual"]
     assert service._chatterbox_engine is None
+
+
+def test_chatterbox_variant_multilingual_is_refused_not_registered_twice(tmp_path, monkeypatch):
+    # Accepting it registered two engines under one id; the English one vanished.
+    monkeypatch.setattr(settings, "chatterbox_variant", "multilingual")
+    monkeypatch.setattr(settings, "chatterbox_model_dir", str(tmp_path / "english"))
+
+    with pytest.raises(ValueError, match="CHATTERBOX_MULTILINGUAL_ENABLED"):
+        ChatterboxEngine()
+    with pytest.raises(ValueError, match="CHATTERBOX_MULTILINGUAL_ENABLED"):
+        TTSService(expressive=True, multilingual=True)
 
 
 def test_the_multilingual_engine_is_off_by_default():
@@ -329,6 +340,113 @@ def test_voices_endpoint_lists_the_multilingual_voices(tmp_path, monkeypatch):
     assert "chatterbox_standard" in listed
 
 
+def test_voices_endpoint_omits_the_multilingual_voices_when_the_flag_is_off(
+    tmp_path, monkeypatch
+):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    app.state.tts_service = _service(tmp_path, monkeypatch, english=True, multilingual=False)
+    payload = TestClient(app).get("/api/tts/voices").json()
+
+    voices = payload["voices"] if isinstance(payload, dict) else payload
+    listed = {voice["id"] for voice in voices}
+    assert "chatterbox_standard" in listed
+    assert not {v for v in listed if v.startswith("chatterbox_multilingual_")}
+
+
+def test_streaming_a_multilingual_voice_passes_its_language(tmp_path, monkeypatch):
+    service = _service(tmp_path, monkeypatch, english=False, multilingual=True)
+
+    chunks = list(service.synthesize_streaming("Bonjour.", voice="chatterbox_multilingual_fr"))
+
+    assert chunks
+    assert service._chatterbox_multilingual_engine.model.calls[-1]["language_id"] == "fr"
+
+
+# ---------------------------------------------------------------------------
+# The default voice is English, never the first language alphabetically
+# ---------------------------------------------------------------------------
+
+
+def test_the_engine_default_voice_is_english(tmp_path):
+    engine = _multilingual_engine(tmp_path)
+
+    voice_key, locale = engine.resolve_voice(None)
+
+    assert engine.language_id_for(locale) == "en"
+    assert engine.available_voice_ids()[0] == "chatterbox_multilingual_en"
+    assert engine.descriptor()["default_voice"] == "chatterbox_multilingual_en"
+
+
+def test_naming_the_engine_without_a_voice_renders_english(tmp_path, monkeypatch):
+    service = _service(tmp_path, monkeypatch, english=False, multilingual=True)
+
+    result = service.synthesize_detailed("Hello there.", engine=CHATTERBOX_MULTILINGUAL_ENGINE)
+
+    assert result.engine == CHATTERBOX_MULTILINGUAL_ENGINE
+    assert service._chatterbox_multilingual_engine.model.calls[-1]["language_id"] == "en"
+
+
+# ---------------------------------------------------------------------------
+# A substituted voice keeps the language
+# ---------------------------------------------------------------------------
+
+
+def test_a_multilingual_voice_without_its_engine_is_refused_not_answered_in_english(
+    tmp_path, monkeypatch
+):
+    service = _service(tmp_path, monkeypatch, english=True, multilingual=False)
+
+    with pytest.raises(VoiceLanguageUnavailableError, match="chatterbox_multilingual"):
+        service.synthesize_detailed("Guten Morgen.", voice="chatterbox_multilingual_de")
+    assert service._kokoro.calls == []
+
+
+def test_the_api_answers_a_refused_language_with_422(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    app.state.tts_service = _service(tmp_path, monkeypatch, english=True, multilingual=False)
+    response = TestClient(app).post(
+        "/api/tts/synthesize",
+        json={"text": "Guten Morgen.", "voice": "chatterbox_multilingual_de", "cache": False},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "does not answer in another language" in response.text
+
+
+def test_an_english_multilingual_voice_still_falls_back_with_a_warning(tmp_path, monkeypatch):
+    # Same language, different timbre: the pre-existing reported substitution.
+    service = _service(tmp_path, monkeypatch, english=False, multilingual=False)
+
+    result = service.synthesize_detailed("Hello.", voice="chatterbox_multilingual_en")
+
+    assert result.engine == "kokoro"
+    assert "voice" in result.ignored
+    assert any("chatterbox_multilingual_en" in w for w in result.warnings)
+
+
+def test_a_substitute_is_chosen_in_the_pinned_voices_language(tmp_path, monkeypatch):
+    # A French Kokoro voice sent to the multilingual engine is rendered by its
+    # French voice, not by its (English) default.
+    service = _service(tmp_path, monkeypatch, english=False, multilingual=True)
+    french = next(
+        r.id for r in voice_registry.VOICE_REGISTRY.for_engine("kokoro") if r.language.startswith("fr")
+    )
+
+    result = service.synthesize_detailed(
+        "Bonjour.", voice=french, engine=CHATTERBOX_MULTILINGUAL_ENGINE
+    )
+
+    assert result.engine == CHATTERBOX_MULTILINGUAL_ENGINE
+    assert service._chatterbox_multilingual_engine.model.calls[-1]["language_id"] == "fr"
+    assert any("chatterbox_multilingual_fr" in w for w in result.warnings)
+
+
 # ---------------------------------------------------------------------------
 # Cloning stays on the English model
 # ---------------------------------------------------------------------------
@@ -415,6 +533,44 @@ def test_loading_the_multilingual_model_stays_offline(tmp_path, monkeypatch):
     assert engine.is_ready
     assert seen == [str(root / "Cangjie5_TC.json")]
     assert type(engine.model.watermarker).__name__ == "_NoOpWatermarker"
+
+
+def test_a_failed_load_still_restores_the_upstream_functions(tmp_path, monkeypatch):
+    tokenizer, segmenter = _install_fake_front_end(monkeypatch)
+    original_download, original_segmenter = tokenizer.hf_hub_download, segmenter.pkuseg
+    root = tmp_path / "mtl"
+    _write_model(root)
+
+    class Backend:
+        @staticmethod
+        def from_local(path, device):
+            raise RuntimeError("corrupt checkpoint")
+
+    monkeypatch.setattr("app.engines.chatterbox._import_backend", lambda _variant: Backend)
+    engine = ChatterboxEngine(
+        model_store=ChatterboxModelStore(root, variant=MULTILINGUAL_VARIANT),
+        variant=MULTILINGUAL_VARIANT,
+    )
+    with pytest.raises(RuntimeError, match="corrupt checkpoint"):
+        engine.load()
+
+    assert tokenizer.hf_hub_download is original_download
+    assert segmenter.pkuseg is original_segmenter
+
+
+def test_a_missing_upstream_target_is_logged_not_silently_skipped(tmp_path, monkeypatch, caplog):
+    tokenizer, _segmenter = _install_fake_front_end(monkeypatch)
+    del tokenizer.hf_hub_download  # an upstream rename
+    # ``None`` in sys.modules makes the import raise ImportError.
+    monkeypatch.setitem(sys.modules, "spacy_pkuseg", None)
+
+    with caplog.at_level("WARNING", logger="app.engines.chatterbox"):
+        with _offline_text_front_end(tmp_path):
+            pass
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(f"{TOKENIZER_MODULE}.hf_hub_download does not exist" in m for m in messages)
+    assert any("spacy_pkuseg is not importable" in m for m in messages)
 
 
 def test_the_upstream_language_list_matches_ours():

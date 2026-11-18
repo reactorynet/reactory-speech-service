@@ -92,8 +92,7 @@ MULTILINGUAL_RUN_FLAGS := $(if $(filter 1,$(CHATTERBOX_MULTILINGUAL)),\
 
 expressive-run:
 	docker run -p 8765:8765 --env-file .env \
-		-v "$(PWD)/models/chatterbox:/app/models/chatterbox" \
-		$(MULTILINGUAL_RUN_FLAGS) \
+		-v "$(PWD)/models/chatterbox:/app/models/chatterbox" $(MULTILINGUAL_RUN_FLAGS) \
 		reactory-speech-service:speech-expressive
 
 download-chatterbox:
