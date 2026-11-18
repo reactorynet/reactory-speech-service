@@ -1,6 +1,7 @@
 .PHONY: setup dev test lint docker-build docker-run image-size clean download-models \
 	models-download models-archive models-restore \
-	expressive-build expressive-run download-chatterbox
+	expressive-build expressive-run download-chatterbox \
+	download-chatterbox-multilingual
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -24,8 +25,10 @@ download-models:
 # Offline model bundle, for hosts whose network blocks the model sources (see
 # README "Restricted networks"). Download and archive on a connected machine,
 # copy the archive across, restore on the restricted host.
-# CHATTERBOX=1 adds the optional Chatterbox weights (about 3.2 GB) to the bundle.
-BUNDLE_FLAGS := $(if $(filter 1,$(CHATTERBOX)),--include-chatterbox)
+# CHATTERBOX=1 adds the optional Chatterbox weights (about 3.2 GB) to the bundle,
+# and CHATTERBOX_MULTILINGUAL=1 the 23-language model (about 3.2 GB more).
+BUNDLE_FLAGS := $(if $(filter 1,$(CHATTERBOX)),--include-chatterbox) \
+	$(if $(filter 1,$(CHATTERBOX_MULTILINGUAL)),--include-chatterbox-multilingual)
 
 models-download:
 	./scripts/models-download.sh $(BUNDLE_FLAGS)
@@ -79,10 +82,21 @@ image-size:
 expressive-build: image-size
 	docker build -f Dockerfile.expressive -t reactory-speech-service:speech-expressive .
 
+# CHATTERBOX_MULTILINGUAL=1 also mounts the multilingual weights and enables
+# that engine next to the English one. Three engines resident (Kokoro and both
+# Chatterbox models) need about 9 GB; with less, lower SPEECH_MAX_LOADED_ENGINES
+# to 2 and the least recently used idle engine is unloaded instead.
+MULTILINGUAL_RUN_FLAGS := $(if $(filter 1,$(CHATTERBOX_MULTILINGUAL)),\
+	-v "$(PWD)/models/chatterbox-multilingual:/app/models/chatterbox-multilingual" \
+	-e CHATTERBOX_MULTILINGUAL_ENABLED=true -e SPEECH_MAX_LOADED_ENGINES=3)
+
 expressive-run:
 	docker run -p 8765:8765 --env-file .env \
-		-v "$(PWD)/models/chatterbox:/app/models/chatterbox" \
+		-v "$(PWD)/models/chatterbox:/app/models/chatterbox" $(MULTILINGUAL_RUN_FLAGS) \
 		reactory-speech-service:speech-expressive
 
 download-chatterbox:
 	$(PYTHON) scripts/download_chatterbox.py --variant standard
+
+download-chatterbox-multilingual:
+	$(PYTHON) scripts/download_chatterbox.py --variant multilingual

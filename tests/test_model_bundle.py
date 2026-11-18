@@ -299,6 +299,19 @@ FAKE_CHATTERBOX = {
 }
 
 
+FAKE_MULTILINGUAL = {
+    "chatterbox-multilingual/manifest.json": (
+        b'{\n  "engine": "chatterbox",\n  "variant": "multilingual"\n}\n'
+    ),
+    "chatterbox-multilingual/ve.pt": b"ve",
+    "chatterbox-multilingual/t3_mtl23ls_v2.safetensors": b"t3",
+    "chatterbox-multilingual/s3gen.pt": b"s3gen",
+    "chatterbox-multilingual/grapheme_mtl_merged_expanded_v1.json": b"{}",
+    "chatterbox-multilingual/Cangjie5_TC.json": b"[]",
+    "chatterbox-multilingual/conds.pt": b"conds",
+}
+
+
 def _archive_names(path: Path) -> list[str]:
     with tarfile.open(path) as tar:
         return tar.getnames()
@@ -385,9 +398,14 @@ def _fake_python(tmp_path: Path, *, skip_chatterbox_file: str = "") -> tuple[Pat
     log = tmp_path / "calls.log"
     stub = tmp_path / "fake-python"
     whisper = " ".join(p.split("/", 1)[1] for p in FAKE_MODELS if p.startswith("whisper-"))
-    chatterbox = " ".join(
-        p.split("/", 1)[1] for p in FAKE_CHATTERBOX if not p.endswith(skip_chatterbox_file or "\0")
-    )
+
+    def names(files: dict[str, bytes]) -> str:
+        return " ".join(
+            p.split("/", 1)[1] for p in files if not p.endswith(skip_chatterbox_file or "\0")
+        )
+
+    chatterbox = names(FAKE_CHATTERBOX)
+    multilingual = names(FAKE_MULTILINGUAL)
     stub.write_text(
         "#!/usr/bin/env bash\n"
         '[ "$1" = "-c" ] && exit 0\n'
@@ -399,7 +417,9 @@ def _fake_python(tmp_path: Path, *, skip_chatterbox_file: str = "") -> tuple[Pat
         f'    for f in {whisper}; do echo x > "$MODELS_DIR/whisper-$WHISPER_MODEL_SIZE/$f"; done ;;\n'
         "  download_chatterbox.py)\n"
         '    dir="${*: -1}"; mkdir -p "$dir"\n'
-        f'    for f in {chatterbox}; do echo x > "$dir/$f"; done ;;\n'
+        f'    files="{chatterbox}"\n'
+        f'    case " $* " in *" --variant multilingual "*) files="{multilingual}" ;; esac\n'
+        '    for f in $files; do echo x > "$dir/$f"; done ;;\n'
         "esac\n",
         encoding="utf-8",
     )
@@ -444,3 +464,146 @@ def test_download_reports_a_partial_chatterbox_download(tmp_path: Path):
 
     assert completed.returncode == 1
     assert "chatterbox/conds.pt" in completed.stderr
+
+
+# ---------------------------------------------------------------------------
+# Optional Chatterbox Multilingual weights (--include-chatterbox-multilingual)
+# ---------------------------------------------------------------------------
+
+
+def test_archive_leaves_multilingual_out_unless_asked(tmp_path: Path):
+    models = _write_models(
+        tmp_path / "models", {**FAKE_MODELS, **FAKE_CHATTERBOX, **FAKE_MULTILINGUAL}
+    )
+    out = tmp_path / "b.tar.gz"
+
+    completed = _run(
+        ARCHIVE, "--models-dir", models, "--output", out, "--include-chatterbox", cwd=tmp_path
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not any("chatterbox-multilingual" in n for n in _archive_names(out))
+    with tarfile.open(out) as tar:
+        manifest = tar.extractfile(f"{BUNDLE}/MANIFEST.txt").read().decode()
+    assert "chatterbox: standard" in manifest
+    assert "chatterbox-multilingual: none" in manifest
+
+
+def test_multilingual_round_trips_alongside_the_english_model(tmp_path: Path):
+    models = _write_models(
+        tmp_path / "models", {**FAKE_MODELS, **FAKE_CHATTERBOX, **FAKE_MULTILINGUAL}
+    )
+    out = tmp_path / "b.tar.gz"
+
+    packed = _run(
+        ARCHIVE,
+        "--models-dir",
+        models,
+        "--output",
+        out,
+        "--include-chatterbox",
+        "--include-chatterbox-multilingual",
+        cwd=tmp_path,
+    )
+
+    assert packed.returncode == 0, packed.stderr
+    with tarfile.open(out) as tar:
+        manifest = tar.extractfile(f"{BUNDLE}/MANIFEST.txt").read().decode()
+    assert "chatterbox: standard" in manifest
+    assert "chatterbox-multilingual: multilingual" in manifest
+
+    target = tmp_path / "restored"
+    restored = _run(RESTORE, out, "--models-dir", target, cwd=tmp_path)
+
+    assert restored.returncode == 0, restored.stderr
+    assert _tree(target) == {**FAKE_MODELS, **FAKE_CHATTERBOX, **FAKE_MULTILINGUAL}
+    assert "CHATTERBOX_MULTILINGUAL=1" in restored.stdout
+
+
+def test_including_multilingual_requires_its_manifest(tmp_path: Path):
+    weights = {k: v for k, v in FAKE_MULTILINGUAL.items() if not k.endswith("manifest.json")}
+    models = _write_models(tmp_path / "models", {**FAKE_MODELS, **weights})
+    out = tmp_path / "b.tar.gz"
+
+    completed = _run(
+        ARCHIVE,
+        "--models-dir",
+        models,
+        "--output",
+        out,
+        "--include-chatterbox-multilingual",
+        cwd=tmp_path,
+    )
+
+    assert completed.returncode == 1
+    assert "chatterbox-multilingual/manifest.json" in completed.stderr
+    assert not out.exists()
+
+
+def test_download_script_checks_the_files_the_multilingual_engine_loads():
+    from app.engines.chatterbox import MANIFEST_NAME, MULTILINGUAL_VARIANT, VARIANT_FILES
+
+    script = DOWNLOAD.read_text(encoding="utf-8")
+    listed = re.search(r'^MULTILINGUAL_FILES="([^"]*)"', script, re.M)
+
+    assert listed, "models-download.sh must declare MULTILINGUAL_FILES"
+    assert sorted(listed.group(1).split()) == sorted(
+        [MANIFEST_NAME, *VARIANT_FILES[MULTILINGUAL_VARIANT]]
+    )
+    assert set(FAKE_MULTILINGUAL) == {
+        f"chatterbox-multilingual/{name}"
+        for name in (MANIFEST_NAME, *VARIANT_FILES[MULTILINGUAL_VARIANT])
+    }
+
+
+def test_multilingual_weights_are_never_built_into_an_image():
+    ignored = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+    assert "models/chatterbox-multilingual/" in ignored
+
+
+def test_download_fetches_multilingual_only_when_asked(tmp_path: Path):
+    stub, log = _fake_python(tmp_path)
+    models = tmp_path / "models"
+
+    english = _run(
+        DOWNLOAD, "--models-dir", models, "--python", stub, "--include-chatterbox", cwd=tmp_path
+    )
+
+    assert english.returncode == 0, english.stderr
+    assert "--variant multilingual" not in log.read_text()
+
+    both = _run(
+        DOWNLOAD,
+        "--models-dir",
+        models,
+        "--python",
+        stub,
+        "--include-chatterbox",
+        "--include-chatterbox-multilingual",
+        cwd=tmp_path,
+    )
+
+    assert both.returncode == 0, both.stderr
+    assert (
+        "download_chatterbox.py --variant multilingual "
+        f"--models-dir {models.resolve()}/chatterbox-multilingual"
+    ) in log.read_text()
+    assert "--include-chatterbox --include-chatterbox-multilingual" in both.stdout
+
+
+def test_download_reports_a_partial_multilingual_download(tmp_path: Path):
+    stub, _ = _fake_python(tmp_path, skip_chatterbox_file="Cangjie5_TC.json")
+
+    completed = _run(
+        DOWNLOAD,
+        "--models-dir",
+        tmp_path / "models",
+        "--python",
+        stub,
+        "--include-chatterbox-multilingual",
+        cwd=tmp_path,
+    )
+
+    assert completed.returncode == 1
+    assert "chatterbox-multilingual/Cangjie5_TC.json" in completed.stderr

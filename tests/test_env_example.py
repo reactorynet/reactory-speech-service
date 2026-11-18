@@ -27,8 +27,17 @@ def _example_values() -> dict[str, str]:
     return values
 
 
-@pytest.mark.parametrize("field", ["kokoro_model_path", "kokoro_voices_path"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "kokoro_model_path",
+        "kokoro_voices_path",
+        "chatterbox_multilingual_enabled",
+        "chatterbox_multilingual_model_dir",
+    ],
+)
 def test_env_example_model_paths_match_the_installed_files(field: str):
     default = Settings.model_fields[field].default
+    expected = str(default).lower() if isinstance(default, bool) else default
 
-    assert _example_values()[field.upper()] == default
+    assert _example_values()[field.upper()] == expected

@@ -780,7 +780,11 @@ def test_turbo_reports_the_style_in_the_response_contract(tmp_path):
 def test_standard_advertises_the_full_style_vocabulary(tmp_path):
     engine = ChatterboxEngine(model_store=ChatterboxModelStore(tmp_path), variant="standard")
 
-    assert VARIANT_SUPPORTS_EXAGGERATION == {"standard": True, "turbo": False}
+    assert VARIANT_SUPPORTS_EXAGGERATION == {
+        "standard": True,
+        "turbo": False,
+        "multilingual": True,
+    }
     assert engine.supports_exaggeration is True
     assert set(engine.capabilities().styles) == {
         "neutral", "warm", "calm", "cheerful", "serious", "empathetic", "excited", "narration"
@@ -1149,7 +1153,8 @@ def test_registry_still_partitions_the_kokoro_pack():
     assert len(SHIPPED_VOICE_IDS) == 54
     assert len(voice_registry.QUALITY_GRADES) == 47
     assert len(voice_registry.UNGRADED_VOICE_IDS) == 7
-    assert len(voice_registry.ALL_REGISTERED_VOICE_IDS) == 56
+    # 54 Kokoro + chatterbox_standard + chatterbox_turbo + 23 multilingual.
+    assert len(voice_registry.ALL_REGISTERED_VOICE_IDS) == 79
 
 
 def test_manifest_json_is_well_formed(tmp_path):
@@ -2019,6 +2024,18 @@ def _upstream() -> dict:
     return json.loads(UPSTREAM_FIXTURE.read_text(encoding="utf-8"))
 
 
+def _upstream_repo(variant: str) -> dict:
+    """The captured repository a variant downloads from.
+
+    The fixture is keyed by repository, and the multilingual checkpoints live in
+    the standard repository, so that variant reads the standard capture.
+    """
+    repos = _upstream()["repos"]
+    if variant in repos:
+        return repos[variant]
+    return next(repo for repo in repos.values() if repo["repo_id"] == VARIANT_REPOS[variant])
+
+
 def _real_hub(monkeypatch, variant: str) -> list[dict]:
     """Install a fake hub that serves only files that exist upstream.
 
@@ -2026,7 +2043,7 @@ def _real_hub(monkeypatch, variant: str) -> list[dict]:
     file the real repository does not contain, which is what makes it able to
     catch a phantom required file.
     """
-    upstream = _upstream()["repos"][variant]["files"]
+    upstream = _upstream_repo(variant)["files"]
     calls: list[dict] = []
     module = types.ModuleType("huggingface_hub")
 
@@ -2047,10 +2064,10 @@ def _real_hub(monkeypatch, variant: str) -> list[dict]:
     return calls
 
 
-@pytest.mark.parametrize("variant", ["standard", "turbo"])
+@pytest.mark.parametrize("variant", ["standard", "turbo", "multilingual"])
 def test_required_files_all_exist_in_the_real_upstream_repository(variant):
     """Every file the adapter demands must be in the repository it downloads from."""
-    upstream = _upstream()["repos"][variant]
+    upstream = _upstream_repo(variant)
 
     missing_upstream = [name for name in VARIANT_FILES[variant] if name not in upstream["files"]]
 
@@ -2083,8 +2100,10 @@ def test_turbo_does_not_require_a_tokenizer_json():
 
 def test_upstream_fixture_matches_the_recorded_byte_totals():
     """The fixture is internally consistent with the published constants."""
-    for variant, repo in _upstream()["repos"].items():
-        assert sum(repo["files"].values()) == repo["total_bytes"], variant
+    for repo in _upstream()["repos"].values():
+        assert sum(repo["files"].values()) == repo["total_bytes"], repo["repo_id"]
+    for variant in VARIANT_FILES:
+        repo = _upstream_repo(variant)
         assert repo["total_bytes"] == VARIANT_REPO_BYTES[variant], variant
         required = sum(repo["files"][name] for name in VARIANT_FILES[variant])
         assert required == VARIANT_REQUIRED_BYTES[variant], (
@@ -2101,7 +2120,7 @@ def test_standard_required_files_are_a_strict_subset_of_the_repository():
     assert VARIANT_REQUIRED_BYTES["standard"] < repo["total_bytes"] / 4
 
 
-@pytest.mark.parametrize("variant", ["standard", "turbo"])
+@pytest.mark.parametrize("variant", ["standard", "turbo", "multilingual"])
 def test_download_and_load_succeed_against_the_real_file_set(tmp_path, monkeypatch, variant):
     """End-to-end proof, per variant, that download -> verify -> load works.
 
