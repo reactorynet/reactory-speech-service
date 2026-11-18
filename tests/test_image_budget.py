@@ -122,11 +122,16 @@ def test_the_image_interpreter_is_in_the_ci_test_matrix():
     Without this a base-image bump (Dependabot's python:3.11 -> 3.15) is only
     built, never tested, and the pytest jobs stay green on interpreters the
     image does not use.
+
+    The image may come through a registry prefix (``<registry>/python:X.Y-slim``):
+    a mirror of this repository can pull the same image from its own registry.
     """
     match = re.search(
-        r"^FROM python:(\d+\.\d+)-slim", DOCKERFILE.read_text(encoding="utf-8"), re.M
+        r"^FROM (?:\S+/)?python:(\d+\.\d+)-slim\b",
+        DOCKERFILE.read_text(encoding="utf-8"),
+        re.M,
     )
-    assert match, "Dockerfile must pin its interpreter as python:X.Y-slim"
+    assert match, "Dockerfile must pin its interpreter as [<registry>/]python:X.Y-slim"
 
     workflow = WORKFLOW.read_text(encoding="utf-8")
     matrix = re.search(r"python-version:\s*\[([^\]]*)\]", workflow)
