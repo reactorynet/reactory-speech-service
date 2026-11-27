@@ -4,7 +4,18 @@
 # build. Dependabot is told to ignore python 3.15 on reactorynet PR 15; run
 # `@dependabot unignore python` once onnxruntime ships cp315 wheels.
 # This interpreter must stay in the CI test matrix (tests/test_image_budget.py).
-FROM python:3.14-slim
+#
+# Base image is a build arg so each environment can use its own approved
+# registry. Override with `--build-arg PYTHON_BASE_IMAGE=<image>`; it must stay
+# a [<registry>/]python:X.Y-slim image (Debian, for apt-get below). Dependabot
+# does not follow an ARG, so bump the version on this line by hand.
+ARG PYTHON_BASE_IMAGE=python:3.14-slim
+
+FROM ${PYTHON_BASE_IMAGE}
+
+# Some hardened base images end on a non-root user. The steps below install
+# system packages, so switch to root explicitly.
+USER root
 
 # System dependencies for espeak-ng (Kokoro phonemization) and ffmpeg (audio conversion)
 RUN apt-get update && apt-get install -y --no-install-recommends \
