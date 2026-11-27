@@ -153,8 +153,18 @@ jobs:
 
       # The ceiling is documented in docs/architecture/speech-platform.md and
       # enforced by the script; the step fails the build when it is exceeded.
+      #
+      # A fork whose Dockerfile defaults PYTHON_BASE_IMAGE to a private
+      # registry these runners can't pull from can set the repository
+      # variable CI_PYTHON_BASE_IMAGE to a public python:X.Y-slim image of the
+      # same version. Unset, the Dockerfile's default is used.
       - name: Build the speech-core image
-        run: docker build -t reactory-speech-service:speech-core .
+        env:
+          CI_PYTHON_BASE_IMAGE: ${{ vars.CI_PYTHON_BASE_IMAGE }}
+        run: |
+          docker build \
+            ${CI_PYTHON_BASE_IMAGE:+--build-arg "PYTHON_BASE_IMAGE=$CI_PYTHON_BASE_IMAGE"} \
+            -t reactory-speech-service:speech-core .
 
       - name: Assert the documented edge budget
         run: ./scripts/check_image_size.sh --image reactory-speech-service:speech-core
