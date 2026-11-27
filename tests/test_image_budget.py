@@ -123,15 +123,22 @@ def test_the_image_interpreter_is_in_the_ci_test_matrix():
     built, never tested, and the pytest jobs stay green on interpreters the
     image does not use.
 
-    The image may come through a registry prefix (``<registry>/python:X.Y-slim``):
-    a mirror of this repository can pull the same image from its own registry.
+    The image is the declared default of ``ARG PYTHON_BASE_IMAGE`` and may come
+    through a registry prefix (``<registry>/python:X.Y-slim``): a mirror of this
+    repository can pull the same image from its own registry.
     """
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert re.search(r"^FROM \$\{PYTHON_BASE_IMAGE\}\s*$", dockerfile, re.M), (
+        "Dockerfile must build FROM ${PYTHON_BASE_IMAGE}"
+    )
     match = re.search(
-        r"^FROM (?:\S+/)?python:(\d+\.\d+)-slim\b",
-        DOCKERFILE.read_text(encoding="utf-8"),
+        r"^ARG PYTHON_BASE_IMAGE=(?:\S+/)?python:(\d+\.\d+)-slim\b",
+        dockerfile,
         re.M,
     )
-    assert match, "Dockerfile must pin its interpreter as [<registry>/]python:X.Y-slim"
+    assert match, (
+        "Dockerfile must pin its interpreter as ARG PYTHON_BASE_IMAGE=[<registry>/]python:X.Y-slim"
+    )
 
     workflow = WORKFLOW.read_text(encoding="utf-8")
     matrix = re.search(r"python-version:\s*\[([^\]]*)\]", workflow)
